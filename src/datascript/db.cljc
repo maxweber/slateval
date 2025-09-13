@@ -671,6 +671,73 @@
        (nil? v)     (fn [x] (nil? x))
        :else        (fn [x] (= v x)))))
 
+(defn ^com.apple.foundationdb.tuple.Tuple tuple
+  "Turns the `components` into a `com.apple.foundationdb.tuple.Tuple`."
+  [& components]
+  (.addAll (com.apple.foundationdb.tuple.Tuple.)
+           ^java.util.List
+           components))
+
+(defn tuple-range
+  "Turns the `components` into a `com.apple.foundationdb.tuple.Tuple` and returns
+   a vector of the begin and end of the tuple's range."
+  [& components]
+  (let [r (.range ^com.apple.foundationdb.tuple.Tuple
+                  (apply tuple
+                         components))]
+    [(.begin r)
+     (.end r)]))
+
+(defn ^com.apple.foundationdb.tuple.Tuple datom-tuple
+  "Converts a datom to a `com.apple.foundationdb.tuple.Tuple` and sorts the
+   components according to the `order`."
+  ([order datom]
+   (let [[e a v t] datom
+         l (case order
+             :eavt
+             (list (name order) e (some-> a name) v t)
+             :aevt
+             (list (name order) (some-> a name) e v t)
+             :avet
+             (list (name order) (some-> a name) v e t))]
+     (apply tuple l)))
+  ([datom]
+   (datom-tuple :eavt
+                datom)))
+
+(defn datom-from-tuple
+  "Reads back a datom that was stored as `com.apple.foundationdb.tuple.Tuple`."
+  [tuple]
+  (let [[order c0 c1 c2 c3] (vec tuple)]
+    (case order
+      "eavt"
+      (datom c0 (keyword c1) c2 c3)
+      "aevt"
+      (datom (keyword c1) c0 c2 c3)
+      "avet"
+      (datom (keyword c1) c2 c0 c3))))
+
+(defn tuple-from-bytes
+  "Converts a byte array into a `com.apple.foundationdb.tuple.Tuple`."
+  [^bytes bytes]
+  (com.apple.foundationdb.tuple.Tuple/fromBytes bytes))
+
+(defn bytes-to-datoms
+  "Converts a collection of byte array (`com.apple.foundationdb.tuple.Tuple`) into
+   datoms."
+  [byte-tuples]
+  (map
+   (comp
+    datom-from-tuple
+    tuple-from-bytes)
+   byte-tuples))
+
+(defn byte-array-compare
+  [^bytes a ^bytes b]
+  (java.util.Arrays/compareUnsigned
+   a
+   b))
+
 (defrecord-updatable DB [schema eavt aevt avet max-eid max-tx rschema pull-patterns pull-attrs hash]
   #?@(:cljs
       [IHash                (-hash  [db]        (hash-db db))
