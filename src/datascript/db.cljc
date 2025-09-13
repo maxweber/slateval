@@ -1495,16 +1495,16 @@
   (let [indexing? (indexing? db (.-a datom))]
     (if (datom-added datom)
       (cond-> db
-        true      (update :eavt set/conj datom cmp-datoms-eavt-quick)
-        true      (update :aevt set/conj datom cmp-datoms-aevt-quick)
-        indexing? (update :avet set/conj datom cmp-datoms-avet-quick)
+        true      (update :eavt set/conj (.pack (datom-tuple :eavt datom)) byte-array-compare)
+        true      (update :eavt set/conj (.pack (datom-tuple :aevt datom)) byte-array-compare)
+        true      (update :eavt set/conj (.pack (datom-tuple :avet datom)) byte-array-compare)
         true      (advance-max-eid (.-e datom))
         true      (assoc :hash (atom 0)))
       (if-some [removing (fsearch db [(.-e datom) (.-a datom) (.-v datom)])]
         (cond-> db
-          true      (update :eavt set/disj removing cmp-datoms-eavt-quick)
-          true      (update :aevt set/disj removing cmp-datoms-aevt-quick)
-          indexing? (update :avet set/disj removing cmp-datoms-avet-quick)
+          true      (update :eavt set/disj (.pack (datom-tuple :eavt removing)) byte-array-compare)
+          true      (update :eavt set/disj (.pack (datom-tuple :aevt removing)) byte-array-compare)
+          indexing? (update :eavt set/disj (.pack (datom-tuple :avet removing)) byte-array-compare)
           true      (assoc :hash (atom 0)))
         db))))
 
