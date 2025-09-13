@@ -1,6 +1,7 @@
 {:deps
  {persistent-sorted-set/persistent-sorted-set {:mvn/version "0.3.0"}
-  io.github.tonsky/extend-clj {:mvn/version "0.1.0"}}
+  io.github.tonsky/extend-clj {:mvn/version "0.1.0"}
+  org.foundationdb/fdb-java {:mvn/version "7.3.47"}}
   
  :aliases
  {:cljs
