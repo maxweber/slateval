@@ -708,14 +708,19 @@
 (defn datom-from-tuple
   "Reads back a datom that was stored as `com.apple.foundationdb.tuple.Tuple`."
   [tuple]
-  (let [[order c0 c1 c2 c3] (vec tuple)]
-    (case order
-      "eavt"
-      (datom c0 (keyword c1) c2 c3)
-      "aevt"
-      (datom (keyword c1) c0 c2 c3)
-      "avet"
-      (datom (keyword c1) c2 c0 c3))))
+  (try
+    (let [[order c0 c1 c2 c3] (vec tuple)]
+      (case order
+        "eavt"
+        (datom c0 (keyword c1) c2 c3)
+        "aevt"
+        (datom (keyword c1) c0 c2 c3)
+        "avet"
+        (datom c2 (keyword c0) c1 c3)))
+    (catch Exception e
+      (throw (ex-info "datom-from-tuple failed"
+                      {:tuple tuple}
+                      e)))))
 
 (defn tuple-from-bytes
   "Converts a byte array into a `com.apple.foundationdb.tuple.Tuple`."
