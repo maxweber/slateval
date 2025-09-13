@@ -1048,9 +1048,8 @@
   (map->DB
     {:schema        schema
      :rschema       (rschema (merge implicit-schema schema))
-     :eavt          (set/sorted-set* (assoc opts :cmp cmp-datoms-eavt))
-     :aevt          (set/sorted-set* (assoc opts :cmp cmp-datoms-aevt))
-     :avet          (set/sorted-set* (assoc opts :cmp cmp-datoms-avet))
+
+     :eavt          (set/sorted-set* (assoc opts :cmp byte-array-compare))
      :max-eid       e0
      :max-tx        tx0
      :pull-patterns (lru/cache 100)
