@@ -731,10 +731,10 @@
   "Converts a collection of byte array (`com.apple.foundationdb.tuple.Tuple`) into
    datoms."
   [byte-tuples]
-  (map
-   (comp
-    datom-from-tuple
-    tuple-from-bytes)
+  (->Eduction
+   (map (comp
+            datom-from-tuple
+            tuple-from-bytes))
    byte-tuples))
 
 (defn byte-array-compare
