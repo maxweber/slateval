@@ -901,9 +901,15 @@
 
   (-seek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
-    (set/slice (get db index)
-      (components->pattern db index c0 c1 c2 c3 e0 tx0)
-      (datom emax nil nil txmax)))
+    ;; TODO: check if correct:
+    (let [[begin _end] (apply tuple-range
+                              (take-while identity
+                                          (tuple-list index
+                                                      (components->pattern* db index c0 c1 c2 c3))))]
+      (bytes-to-datoms
+       (set/slice (.-eavt db)
+                  begin
+                  (pack (datom-tuple index (datom emax nil nil txmax)))))))
 
   (-rseek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
