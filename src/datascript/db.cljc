@@ -3,11 +3,13 @@
     #?(:cljs [goog.array :as garray])
     [clojure.walk]
     [clojure.data]
+    [clojure.edn :as edn]
     #?(:clj [datascript.inline :refer [update]])
     [datascript.lru :as lru]
     [datascript.util :as util]
     [me.tonsky.persistent-sorted-set :as set]
-    [me.tonsky.persistent-sorted-set.arrays :as arrays])
+    [me.tonsky.persistent-sorted-set.arrays :as arrays]
+    [taoensso.nippy :as nippy])
   #?(:clj (:import clojure.lang.IFn$OOL))
   #?(:cljs (:require-macros [datascript.db :refer [case-tree combine-cmp defn+ defcomp defrecord-updatable int-compare validate-attr validate-val]]))
   (:refer-clojure :exclude [seqable? #?(:clj update)]))
@@ -604,6 +606,12 @@
 #?(:clj  (declare components->pattern)
    :cljs (defn components->pattern [db index c0 c1 c2 c3 default-e default-tx]))
 
+#?(:clj  (declare resolve-datom*)
+   :cljs (defn resolve-datom* [db e a v t default-e default-tx]))
+
+#?(:clj  (declare components->pattern*)
+   :cljs (defn components->pattern* [db index c0 c1 c2 c3 default-e default-tx]))
+
 ;;;;;;;;;; Fast validation
 
 #?(:clj
@@ -678,6 +686,35 @@
            ^java.util.List
            components))
 
+(defn serialize-value
+  [v]
+  (cond
+    (map? v)
+    (nippy/freeze v)
+
+    (keyword? v)
+    (nippy/freeze v)
+
+    :else
+    v))
+
+(defn tuple-list
+  [order datom]
+  (try
+    (let [[e a v t] datom]
+      (case (keyword order)
+        :eavt
+        (list (name order) e (when a (pr-str a)) (serialize-value v) t)
+        :aevt
+        (list (name order) (when a (pr-str a)) e (serialize-value v) t)
+        :avet
+        (list (name order) (when a (pr-str a)) (serialize-value v) e t)))
+    (catch Exception e
+      (throw (ex-info "tuple-list failed"
+                      {:order order
+                       :datom datom}
+                      e)))))
+
 (defn tuple-range
   "Turns the `components` into a `com.apple.foundationdb.tuple.Tuple` and returns
    a vector of the begin and end of the tuple's range."
@@ -692,18 +729,18 @@
   "Converts a datom to a `com.apple.foundationdb.tuple.Tuple` and sorts the
    components according to the `order`."
   ([order datom]
-   (let [[e a v t] datom
-         l (case order
-             :eavt
-             (list (name order) e (some-> a name) v t)
-             :aevt
-             (list (name order) (some-> a name) e v t)
-             :avet
-             (list (name order) (some-> a name) v e t))]
-     (apply tuple l)))
+   (apply tuple
+          (tuple-list order
+                      datom)))
   ([datom]
    (datom-tuple :eavt
                 datom)))
+
+(defn deserialize-value
+  [v]
+  (if (bytes? v)
+    (nippy/thaw v)
+    v))
 
 (defn datom-from-tuple
   "Reads back a datom that was stored as `com.apple.foundationdb.tuple.Tuple`."
@@ -712,11 +749,11 @@
     (let [[order c0 c1 c2 c3] (vec tuple)]
       (case order
         "eavt"
-        (datom c0 (keyword c1) c2 c3)
+        (datom c0 (edn/read-string c1) (deserialize-value c2) c3)
         "aevt"
-        (datom (keyword c1) c0 c2 c3)
+        (datom c1 (edn/read-string c0) (deserialize-value c2) c3)
         "avet"
-        (datom c2 (keyword c0) c1 c3)))
+        (datom c2 (edn/read-string c0) (deserialize-value c1) c3)))
     (catch Exception e
       (throw (ex-info "datom-from-tuple failed"
                       {:tuple tuple}
@@ -727,14 +764,17 @@
   [^bytes bytes]
   (com.apple.foundationdb.tuple.Tuple/fromBytes bytes))
 
+(def bytes-to-datoms-xf
+  (comp
+   datom-from-tuple
+   tuple-from-bytes))
+
 (defn bytes-to-datoms
   "Converts a collection of byte array (`com.apple.foundationdb.tuple.Tuple`) into
    datoms."
   [byte-tuples]
   (->Eduction
-   (map (comp
-            datom-from-tuple
-            tuple-from-bytes))
+   (map bytes-to-datoms-xf)
    byte-tuples))
 
 (defn byte-array-compare
@@ -742,6 +782,25 @@
   (java.util.Arrays/compareUnsigned
    a
    b))
+
+(defn pack
+  [^com.apple.foundationdb.tuple.Tuple tuple]
+  (try
+    (.pack tuple)
+    (catch Exception e
+      (throw (ex-info "pack failed"
+                      {:tuple tuple}
+                      e)))))
+
+(defn case-pick
+  [case datom]
+  (into []
+        (map (fn [component]
+               (get datom
+                    (keyword component))))
+        case))
+
+(declare slice)
 
 (defrecord-updatable DB [schema eavt aevt avet max-eid max-tx rschema pull-patterns pull-attrs hash]
   #?@(:cljs
@@ -788,50 +847,57 @@
   (-search [db pattern]
     (let [[e a v tx] pattern
           eavt       (.-eavt db)
-          aevt       (.-aevt db)
-          avet       (.-avet db)
           pred       #?(:clj  (vpred v)
                         :cljs #(= v %))
           multival?  (contains? (-attrs-by db :db.cardinality/many) a)]
       (case-tree [e a (some? v) tx]
-        [(set/slice eavt (datom e a v tx) (datom e a v tx))                   ;; e a v tx
-         (set/slice eavt (datom e a v tx0) (datom e a v txmax))               ;; e a v _
-         (->> (set/slice eavt (datom e a nil tx0) (datom e a nil txmax))      ;; e a _ tx
-           (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
-         (set/slice eavt (datom e a nil tx0) (datom e a nil txmax))           ;; e a _ _
-         (->> (set/slice eavt (datom e nil nil tx0) (datom e nil nil txmax))  ;; e _ v tx
-           (->Eduction (filter (fn [^Datom d] (and (pred (.-v d))
-                                                (= tx (datom-tx d)))))))
-         (->> (set/slice eavt (datom e nil nil tx0) (datom e nil nil txmax))  ;; e _ v _
-           (->Eduction (filter (fn [^Datom d] (pred (.-v d))))))
-         (->> (set/slice eavt (datom e nil nil tx0) (datom e nil nil txmax))  ;; e _ _ tx
-           (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
-         (set/slice eavt (datom e nil nil tx0) (datom e nil nil txmax))       ;; e _ _ _
-         (if (indexing? db a)                                                 ;; _ a v tx
-           (->> (set/slice avet (datom e0 a v tx0) (datom emax a v txmax))      
-             (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
-           (->> (set/slice aevt (datom e0 a nil tx0) (datom emax a nil txmax))
-             (->Eduction (filter (fn [^Datom d] (and (pred (.-v d))
-                                                  (= tx (datom-tx d))))))))
-         (if (indexing? db a)                                                 ;; _ a v _
-           (set/slice avet (datom e0 a v tx0) (datom emax a v txmax))
-           (->> (set/slice aevt (datom e0 a nil tx0) (datom emax a nil txmax))
-             (->Eduction (filter (fn [^Datom d] (pred (.-v d)))))))
-         (->> (set/slice aevt (datom e0 a nil tx0) (datom emax a nil txmax))  ;; _ a _ tx
-           (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
-         (set/slice aevt (datom e0 a nil tx0) (datom emax a nil txmax))       ;; _ a _ _
-         (filter (fn [^Datom d] (and (pred (.-v d))
-                                  (= tx (datom-tx d)))) eavt)                 ;; _ _ v tx
-         (filter (fn [^Datom d] (pred (.-v d))) eavt)                         ;; _ _ v 
-         (filter (fn [^Datom d] (= tx (datom-tx d))) eavt)                    ;; _ _ _ tx
-         eavt])))                                                             ;; _ _ _ _
+                 [(slice '[e a v tx] db :eavt (datom e a v tx) (datom e a v tx)) ;; e a v tx
+                  (slice '[ e a v _] db :eavt (datom e a v tx0) (datom e a v txmax)) ;; e a v _
+                  (->> (slice '[e a _ tx] db :eavt (datom e a nil tx0) (datom e a nil txmax)) ;; e a _ tx
+                       (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
+                  (slice '[e a _ _] db :eavt (datom e a nil tx0) (datom e a nil txmax)) ;; e a _ _
+                  (->> (slice '[e _ v tx] db :eavt (datom e nil nil tx0) (datom e nil nil txmax)) ;; e _ v tx
+                       (->Eduction (filter (fn [^Datom d] (and (pred (.-v d))
+                                                               (= tx (datom-tx d)))))))
+                  (->> (slice '[e _ v _] db :eavt (datom e nil nil tx0) (datom e nil nil txmax)) ;; e _ v _
+                       (->Eduction (filter (fn [^Datom d] (pred (.-v d))))))
+                  (->> (slice '[e _ _ tx] db :eavt (datom e nil nil tx0) (datom e nil nil txmax)) ;; e _ _ tx
+                       (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
+                  (slice '[e _ _ _] db :eavt (datom e nil nil tx0) (datom e nil nil txmax)) ;; e _ _ _
+                  (if (indexing? db a) ;; _ a v tx
+                    (->> (slice '[_ a v tx] db :avet (datom e0 a v tx0) (datom emax a v txmax))
+                         (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
+                    (->> (slice '[_ a v tx] db :aevt (datom e0 a nil tx0) (datom emax a nil txmax))
+                         (->Eduction (filter (fn [^Datom d] (and (pred (.-v d))
+                                                                 (= tx (datom-tx d))))))))
+                  (if (indexing? db a) ;; _ a v _
+                    (slice '[_ a v _] db :avet (datom e0 a v tx0) (datom emax a v txmax))
+                    (->> (slice '[_ a v _] db :aevt (datom e0 a nil tx0) (datom emax a nil txmax))
+                         (->Eduction (filter (fn [^Datom d] (pred (.-v d)))))))
+                  (->> (slice '[_ a _ tx] db :aevt (datom e0 a nil tx0) (datom emax a nil txmax)) ;; _ a _ tx
+                       (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
+                  (slice '[_ a _ _] db :aevt (datom e0 a nil tx0) (datom emax a nil txmax)) ;; _ a _ _
+                  (filter (fn [^Datom d] (and (pred (.-v d))
+                                                (= tx (datom-tx d))))
+                            (bytes-to-datoms eavt)) ;; _ _ v tx
+                  (filter (fn [^Datom d] (pred (.-v d)))
+                            (bytes-to-datoms eavt)) ;; _ _ v
+                  (filter (fn [^Datom d] (= tx (datom-tx d)))
+                          (bytes-to-datoms eavt)) ;; _ _ _ tx
+                  (bytes-to-datoms eavt)] ;; _ _ _ _
+                 )))
 
   IIndexAccess
   (-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
-    (set/slice (get db index)
-      (components->pattern db index c0 c1 c2 c3 e0 tx0)
-      (components->pattern db index c0 c1 c2 c3 emax txmax)))
+    (let [[begin end] (apply tuple-range
+                             (take-while identity
+                                         (tuple-list index
+                                                     (components->pattern* db index c0 c1 c2 c3))))]
+      (bytes-to-datoms
+       (set/slice (.-eavt db)
+                  begin
+                  end))))
 
   (-seek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
@@ -858,6 +924,37 @@
   clojure.data/Diff
   (diff-similar [a b]
     (diff-sorted (:eavt a) (:eavt b) cmp-datoms-eav-quick)))
+
+(defn slice
+  [case db order start-datom end-datom]
+  (let [index (.-eavt ^datascript.db.DB db)
+        take-count (inc (- (count case)
+                           (count (take-while
+                                   (fn [x]
+                                     (= x '_))
+                                   (reverse case)))))
+        start-tuple (apply tuple
+                           (take-while identity
+                                       (tuple-list order
+                                                   (case-pick case
+                                                              start-datom))))
+        start-bytes (pack start-tuple)
+        range (.range ^com.apple.foundationdb.tuple.Tuple start-tuple)
+        begin-bytes (.begin range)
+        end-bytes (.end range)]
+    #_(prn {:case case
+            :take-count take-count
+            :order order
+            :start-datom start-datom
+            :start-tuple start-tuple})
+    (->Eduction
+     (comp (map bytes-to-datoms-xf)
+           (take-while (fn [datom]
+                         (<= (cmp-datoms-eavt datom end-datom)
+                             0))))
+     (set/slice index
+                begin-bytes
+                end-bytes))))
 
 (defn db? [x]
   #?(:clj
@@ -1219,6 +1316,22 @@
     :aevt (resolve-datom db c1 c0 c2 c3 default-e default-tx)
     :avet (resolve-datom db c2 c0 c1 c3 default-e default-tx)))
 
+(defn+ resolve-datom* [db e a v t]
+  (when (some? a)
+    (validate-attr a (list 'resolve-datom 'db e a v t)))
+  [(when (some? e) (entid-strict db e))
+   a
+   (if (and (some? v) (ref? db a))
+     (entid-strict db v)
+     v)
+   (when (some? t) (entid-strict db t))])
+
+(defn+ components->pattern* [db index c0 c1 c2 c3]
+  (case index
+    :eavt (resolve-datom* db c0 c1 c2 c3)
+    :aevt (resolve-datom* db c1 c0 c2 c3)
+    :avet (resolve-datom* db c2 c0 c1 c3)))
+
 (defn find-datom [db index c0 c1 c2 c3]
   (validate-indexed db index c0 c1 c2 c3)
   (let [set     (get db index)
@@ -1499,16 +1612,16 @@
   (let [indexing? (indexing? db (.-a datom))]
     (if (datom-added datom)
       (cond-> db
-        true      (update :eavt set/conj (.pack (datom-tuple :eavt datom)) byte-array-compare)
-        true      (update :eavt set/conj (.pack (datom-tuple :aevt datom)) byte-array-compare)
-        true      (update :eavt set/conj (.pack (datom-tuple :avet datom)) byte-array-compare)
+        true      (update :eavt set/conj (pack (datom-tuple :eavt datom)) byte-array-compare)
+        true      (update :eavt set/conj (pack (datom-tuple :aevt datom)) byte-array-compare)
+        indexing? (update :eavt set/conj (pack (datom-tuple :avet datom)) byte-array-compare)
         true      (advance-max-eid (.-e datom))
         true      (assoc :hash (atom 0)))
       (if-some [removing (fsearch db [(.-e datom) (.-a datom) (.-v datom)])]
         (cond-> db
-          true      (update :eavt set/disj (.pack (datom-tuple :eavt removing)) byte-array-compare)
-          true      (update :eavt set/disj (.pack (datom-tuple :aevt removing)) byte-array-compare)
-          indexing? (update :eavt set/disj (.pack (datom-tuple :avet removing)) byte-array-compare)
+          true      (update :eavt set/disj (pack (datom-tuple :eavt removing)) byte-array-compare)
+          true      (update :eavt set/disj (pack (datom-tuple :aevt removing)) byte-array-compare)
+          indexing? (update :eavt set/disj (pack (datom-tuple :avet removing)) byte-array-compare)
           true      (assoc :hash (atom 0)))
         db))))
 
