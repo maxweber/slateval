@@ -16,6 +16,8 @@
 
 #?(:clj (set! *warn-on-reflection* true))
 
+(declare slice)
+
 ;; ----------------------------------------------------------------------------
 
 #?(:cljs
@@ -929,7 +931,17 @@
 
   clojure.data/Diff
   (diff-similar [a b]
-    (diff-sorted (:eavt a) (:eavt b) cmp-datoms-eav-quick)))
+    (diff-sorted (slice '[_ _ _ _]
+                        a
+                        :eavt
+                        nil
+                        nil)
+                 (slice '[_ _ _ _]
+                        b
+                        :eavt
+                        nil
+                        nil)
+                 cmp-datoms-eav-quick)))
 
 (defn slice
   [case db order start-datom end-datom]
@@ -956,8 +968,9 @@
     (->Eduction
      (comp (map bytes-to-datoms-xf)
            (take-while (fn [datom]
-                         (<= (cmp-datoms-eavt datom end-datom)
-                             0))))
+                         (or (not end-datom)
+                             (<= (cmp-datoms-eavt datom end-datom)
+                                 0)))))
      (set/slice index
                 begin-bytes
                 end-bytes))))
