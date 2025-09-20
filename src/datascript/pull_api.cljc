@@ -274,7 +274,7 @@
   (let [db (.-db context)
         datoms (util/cond+
                  (and (.-wildcard? pattern) (instance? DB db))
-                 (set/slice (.-eavt ^DB db) (db/datom id nil nil db/tx0) (db/datom id nil nil db/txmax))
+                 (seq (db/slice '[e _ _ _] db :eavt (db/datom id nil nil db/tx0) (db/datom id nil nil db/txmax)))
                  
                  (.-wildcard? pattern)
                  (db/-search db [id])
