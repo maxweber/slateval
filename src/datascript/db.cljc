@@ -851,55 +851,56 @@
           eavt       (.-eavt db)
           pred       #?(:clj  (vpred v)
                         :cljs #(= v %))
-          multival?  (contains? (-attrs-by db :db.cardinality/many) a)]
-      (case-tree [e a (some? v) tx]
-                 [(slice '[e a v tx] db :eavt (datom e a v tx) (datom e a v tx)) ;; e a v tx
-                  (slice '[ e a v _] db :eavt (datom e a v tx0) (datom e a v txmax)) ;; e a v _
-                  (->> (slice '[e a _ tx] db :eavt (datom e a nil tx0) (datom e a nil txmax)) ;; e a _ tx
-                       (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
-                  (slice '[e a _ _] db :eavt (datom e a nil tx0) (datom e a nil txmax)) ;; e a _ _
-                  (->> (slice '[e _ v tx] db :eavt (datom e nil nil tx0) (datom e nil nil txmax)) ;; e _ v tx
-                       (->Eduction (filter (fn [^Datom d] (and (pred (.-v d))
-                                                               (= tx (datom-tx d)))))))
-                  (->> (slice '[e _ v _] db :eavt (datom e nil nil tx0) (datom e nil nil txmax)) ;; e _ v _
-                       (->Eduction (filter (fn [^Datom d] (pred (.-v d))))))
-                  (->> (slice '[e _ _ tx] db :eavt (datom e nil nil tx0) (datom e nil nil txmax)) ;; e _ _ tx
-                       (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
-                  (slice '[e _ _ _] db :eavt (datom e nil nil tx0) (datom e nil nil txmax)) ;; e _ _ _
-                  (if (indexing? db a) ;; _ a v tx
-                    (->> (slice '[_ a v tx] db :avet (datom e0 a v tx0) (datom emax a v txmax))
-                         (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
-                    (->> (slice '[_ a v tx] db :aevt (datom e0 a nil tx0) (datom emax a nil txmax))
-                         (->Eduction (filter (fn [^Datom d] (and (pred (.-v d))
-                                                                 (= tx (datom-tx d))))))))
-                  (if (indexing? db a) ;; _ a v _
-                    (slice '[_ a v _] db :avet (datom e0 a v tx0) (datom emax a v txmax))
-                    (->> (slice '[_ a v _] db :aevt (datom e0 a nil tx0) (datom emax a nil txmax))
-                         (->Eduction (filter (fn [^Datom d] (pred (.-v d)))))))
-                  (->> (slice '[_ a _ tx] db :aevt (datom e0 a nil tx0) (datom emax a nil txmax)) ;; _ a _ tx
-                       (->Eduction (filter (fn [^Datom d] (= tx (datom-tx d))))))
-                  (slice '[_ a _ _] db :aevt (datom e0 a nil tx0) (datom emax a nil txmax)) ;; _ a _ _
-                  (filter (fn [^Datom d] (and (pred (.-v d))
-                                                (= tx (datom-tx d))))
-                            (bytes-to-datoms eavt)) ;; _ _ v tx
-                  (filter (fn [^Datom d] (pred (.-v d)))
-                            (bytes-to-datoms eavt)) ;; _ _ v
-                  (filter (fn [^Datom d] (= tx (datom-tx d)))
-                          (bytes-to-datoms eavt)) ;; _ _ _ tx
-                  (bytes-to-datoms eavt)] ;; _ _ _ _
-                 )))
+          multival?  (contains? (-attrs-by db :db.cardinality/many) a)
+          tuples (.-eavt db)
+          [begin end] (tuple-range "eavt")
+          ]
+      (->Eduction
+       (comp
+        (map
+         bytes-to-datoms-xf)
+        (filter
+         (fn [datom]
+           (and (or (not e)
+                    (= e (:e datom)))
+                (or (not a)
+                    (= a (:a datom)))
+                (or (not (some? v))
+                    (= v (:v datom)))
+                (or (not tx)
+                    (= tx (:tx datom)))))))
+       (set/slice tuples
+                  begin
+                  end))))
 
   IIndexAccess
   (-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
-    (let [[begin end] (apply tuple-range
-                             (take-while identity
-                                         (tuple-list index
-                                                     (components->pattern* db index c0 c1 c2 c3))))]
-      (bytes-to-datoms
-       (set/slice (.-eavt db)
-                  begin
-                  end))))
+    (let [[e a v tx] (case index
+                       :eavt [c0 c1 c2 c3]
+                       :aevt [c1 c0 c2 c3]
+                       :avet [c2 c0 c1 c3])
+          [e a v tx] (resolve-datom* db e a v tx)
+          tuples (.-eavt db)
+          [begin end] (tuple-range "eavt")]
+      (seq
+       (->Eduction
+        (comp
+         (map
+          bytes-to-datoms-xf)
+         (filter
+          (fn [datom]
+            (and (or (not e)
+                     (= e (:e datom)))
+                 (or (not a)
+                     (= a (:a datom)))
+                 (or (not (some? v))
+                     (= v (:v datom)))
+                 (or (not tx)
+                     (= tx (:tx datom)))))))
+        (set/slice tuples
+                   begin
+                   end)))))
 
   (-seek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
