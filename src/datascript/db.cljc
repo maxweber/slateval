@@ -703,14 +703,14 @@
 (defn tuple-list
   [order datom]
   (try
-    (let [[e a v t] datom]
+    (let [[e a v t added] datom]
       (case (keyword order)
         :eavt
-        (list (name order) e (when a (pr-str a)) (serialize-value v) t)
+        (list (name order) e (when a (pr-str a)) (serialize-value v) t added)
         :aevt
-        (list (name order) (when a (pr-str a)) e (serialize-value v) t)
+        (list (name order) (when a (pr-str a)) e (serialize-value v) t added)
         :avet
-        (list (name order) (when a (pr-str a)) (serialize-value v) e t)))
+        (list (name order) (when a (pr-str a)) (serialize-value v) e t added)))
     (catch Exception e
       (throw (ex-info "tuple-list failed"
                       {:order order
@@ -748,14 +748,14 @@
   "Reads back a datom that was stored as `com.apple.foundationdb.tuple.Tuple`."
   [tuple]
   (try
-    (let [[order c0 c1 c2 c3] (vec tuple)]
+    (let [[order c0 c1 c2 c3 c4] (vec tuple)]
       (case order
         "eavt"
-        (datom c0 (edn/read-string c1) (deserialize-value c2) c3)
+        (datom c0 (edn/read-string c1) (deserialize-value c2) c3 c4)
         "aevt"
-        (datom c1 (edn/read-string c0) (deserialize-value c2) c3)
+        (datom c1 (edn/read-string c0) (deserialize-value c2) c3 c4)
         "avet"
-        (datom c2 (edn/read-string c0) (deserialize-value c1) c3)))
+        (datom c2 (edn/read-string c0) (deserialize-value c1) c3 c4)))
     (catch Exception e
       (throw (ex-info "datom-from-tuple failed"
                       {:tuple tuple}
@@ -803,6 +803,30 @@
         case))
 
 (declare slice)
+
+(defn datoms-filter
+  "Will remove all retracted `datoms`.
+
+   No matter which index is used (`:eavt`, `:aevt`, `:avet` or `:vaet`) the last
+   two components are always the transaction id and a boolean flag that
+   indicates if the datom is a `:db/add` or `:db/retract`. These two components
+   are also sorted, due to the transaction id everything is in the order in which
+   the tx-ops where transacted. If a datom is retracted in the current database
+   value, then the `:db/add` will be directly followed by a corresponding
+   `:db/retract` datom, and the logic here will remove both from the returned
+   sequence of `datoms`. All `:db/retract` datoms are removed in any case."
+  [datoms]
+  (keep
+   (fn [[d1 d2]]
+     (if-not (:added d1)
+       nil
+       (when-not (and (= (:e d1) (:e d2))
+                      (= (:a d1) (:a d2))
+                      (= (:v d1) (:v d2))
+                      (:added d1)
+                      (not (:added d2)))
+         d1)))
+   (partition-all 2 1 datoms)))
 
 (defrecord-updatable DB [schema eavt aevt avet max-eid max-tx rschema pull-patterns pull-attrs hash]
   #?@(:cljs
@@ -855,23 +879,23 @@
           tuples (.-eavt db)
           [begin end] (tuple-range "eavt")
           ]
-      (->Eduction
-       (comp
-        (map
-         bytes-to-datoms-xf)
-        (filter
-         (fn [datom]
-           (and (or (not e)
-                    (= e (:e datom)))
-                (or (not a)
-                    (= a (:a datom)))
-                (or (not (some? v))
-                    (= v (:v datom)))
-                (or (not tx)
-                    (= tx (:tx datom)))))))
-       (set/slice tuples
-                  begin
-                  end))))
+      (filter
+       (fn [datom]
+         (and (or (not e)
+                  (= e (:e datom)))
+              (or (not a)
+                  (= a (:a datom)))
+              (or (not (some? v))
+                  (= v (:v datom)))
+              (or (not tx)
+                  (= tx (:tx datom)))))
+       (datoms-filter
+        (->Eduction
+         (map
+          bytes-to-datoms-xf)
+         (set/slice tuples
+                    begin
+                    end))))))
 
   IIndexAccess
   (-datoms [db index c0 c1 c2 c3]
@@ -883,24 +907,23 @@
           [e a v tx] (resolve-datom* db e a v tx)
           tuples (.-eavt db)
           [begin end] (tuple-range "eavt")]
-      (seq
-       (->Eduction
-        (comp
+      (filter
+       (fn [datom]
+         (and (or (not e)
+                  (= e (:e datom)))
+              (or (not a)
+                  (= a (:a datom)))
+              (or (not (some? v))
+                  (= v (:v datom)))
+              (or (not tx)
+                  (= tx (:tx datom)))))
+       (datoms-filter
+        (->Eduction
          (map
           bytes-to-datoms-xf)
-         (filter
-          (fn [datom]
-            (and (or (not e)
-                     (= e (:e datom)))
-                 (or (not a)
-                     (= a (:a datom)))
-                 (or (not (some? v))
-                     (= v (:v datom)))
-                 (or (not tx)
-                     (= tx (:tx datom)))))))
-        (set/slice tuples
-                   begin
-                   end)))))
+         (set/slice tuples
+                    begin
+                    end))))))
 
   (-seek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
@@ -1627,6 +1650,14 @@
 ;; In context of `with-datom` we can use faster comparators which
 ;; do not check for nil (~10-15% performance gain in `transact`)
 
+(defn retract-datom
+  [datom* tx]
+  (datom (:e datom*)
+         (:a datom*)
+         (:v datom*)
+         tx
+         false))
+
 (defn with-datom [db ^Datom datom]
   (validate-datom db datom)
   (let [indexing? (indexing? db (.-a datom))]
@@ -1637,11 +1668,12 @@
         indexing? (update :eavt set/conj (pack (datom-tuple :avet datom)) byte-array-compare)
         true      (advance-max-eid (.-e datom))
         true      (assoc :hash (atom 0)))
-      (if-some [removing (fsearch db [(.-e datom) (.-a datom) (.-v datom)])]
+      (if-some [removing (some-> (fsearch db [(.-e datom) (.-a datom) (.-v datom)])
+                                 (retract-datom (:tx datom)))]
         (cond-> db
-          true      (update :eavt set/disj (pack (datom-tuple :eavt removing)) byte-array-compare)
-          true      (update :eavt set/disj (pack (datom-tuple :aevt removing)) byte-array-compare)
-          indexing? (update :eavt set/disj (pack (datom-tuple :avet removing)) byte-array-compare)
+          true      (update :eavt set/conj (pack (datom-tuple :eavt removing)) byte-array-compare)
+          true      (update :eavt set/conj (pack (datom-tuple :aevt removing)) byte-array-compare)
+          indexing? (update :eavt set/conj (pack (datom-tuple :avet removing)) byte-array-compare)
           true      (assoc :hash (atom 0)))
         db))))
 
