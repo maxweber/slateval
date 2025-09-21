@@ -11,6 +11,8 @@
     [org.clojure/clojurescript   "1.10.844" :scope "provided"]
     [persistent-sorted-set       "0.3.0"]
     [io.github.tonsky/extend-clj "0.1.0"]
+    [org.foundationdb/fdb-java "7.3.47"]
+    [com.taoensso/nippy "3.6.0"]
   ]
   
   :plugins [
