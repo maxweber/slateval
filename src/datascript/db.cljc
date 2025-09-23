@@ -928,15 +928,30 @@
 
   (-seek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
-    ;; TODO: check if correct:
-    (let [[begin _end] (apply tuple-range
-                              (take-while identity
-                                          (tuple-list index
-                                                      (components->pattern* db index c0 c1 c2 c3))))]
-      (bytes-to-datoms
-       (set/slice (.-eavt db)
-                  begin
-                  (pack (datom-tuple index (datom emax nil nil txmax)))))))
+    (let [[e a v tx] (case index
+                       :eavt [c0 c1 c2 c3]
+                       :aevt [c1 c0 c2 c3]
+                       :avet [c2 c0 c1 c3])
+          [e a v tx] (resolve-datom* db e a v tx)
+          tuples (.-tuples db)
+          [begin end] (tuple-range "eavt")]
+      (drop-while
+       (fn [datom]
+         (not (and (or (not e)
+                       (= e (:e datom)))
+                   (or (not a)
+                       (= a (:a datom)))
+                   (or (not (some? v))
+                       (= v (:v datom)))
+                   (or (not tx)
+                       (= tx (:tx datom))))))
+       (datoms-filter
+        (->Eduction
+         (map
+          bytes-to-datoms-xf)
+         (set/slice tuples
+                      begin
+                      end))))))
 
   (-rseek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
