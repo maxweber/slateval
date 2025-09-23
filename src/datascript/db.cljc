@@ -828,6 +828,24 @@
          d1)))
    (partition-all 2 1 datoms)))
 
+(defn sort-components
+  [order [c0 c1 c2 c3]]
+  (case order
+    :eavt [c0 c1 c2 c3]
+    :aevt [c1 c0 c2 c3]
+    :avet [c2 c0 c1 c3]))
+
+(defn datom=
+  [[e a v tx] datom]
+  (and (or (not e)
+           (= e (:e datom)))
+       (or (not a)
+           (= a (:a datom)))
+       (or (not (some? v))
+           (= v (:v datom)))
+       (or (not tx)
+           (= tx (:tx datom)))))
+
 (defrecord-updatable DB [schema tuples max-eid max-tx rschema pull-patterns pull-attrs hash]
   #?@(:cljs
       [IHash                (-hash  [db]        (hash-db db))
@@ -881,15 +899,8 @@
           [begin end] (tuple-range "eavt")
           ]
       (filter
-       (fn [datom]
-         (and (or (not e)
-                  (= e (:e datom)))
-              (or (not a)
-                  (= a (:a datom)))
-              (or (not (some? v))
-                  (= v (:v datom)))
-              (or (not tx)
-                  (= tx (:tx datom)))))
+       (partial datom=
+                [e a v tx])
        (datoms-filter
         (->Eduction
          (map
@@ -901,23 +912,25 @@
   IIndexAccess
   (-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
-    (let [[e a v tx] (case index
-                       :eavt [c0 c1 c2 c3]
-                       :aevt [c1 c0 c2 c3]
-                       :avet [c2 c0 c1 c3])
-          [e a v tx] (resolve-datom* db e a v tx)
+    (let [[e a v tx] (sort-components
+                      index
+                      [c0 c1 c2 c3])
+          datom-coll (resolve-datom* db e a v tx)
+          [e a v tx] datom-coll
           tuples (.-tuples db)
-          [begin end] (tuple-range "eavt")]
+          [begin end] (apply tuple-range
+                             (name index)
+                             (take-while
+                              some?
+                              (rest
+                               (tuple-list index
+                                           [e
+                                            a
+                                            v
+                                            tx]))))]
       (filter
-       (fn [datom]
-         (and (or (not e)
-                  (= e (:e datom)))
-              (or (not a)
-                  (= a (:a datom)))
-              (or (not (some? v))
-                  (= v (:v datom)))
-              (or (not tx)
-                  (= tx (:tx datom)))))
+       (partial datom=
+                [e a v tx])
        (datoms-filter
         (->Eduction
          (map
@@ -936,22 +949,16 @@
           tuples (.-tuples db)
           [begin end] (tuple-range "eavt")]
       (drop-while
-       (fn [datom]
-         (not (and (or (not e)
-                       (= e (:e datom)))
-                   (or (not a)
-                       (= a (:a datom)))
-                   (or (not (some? v))
-                       (= v (:v datom)))
-                   (or (not tx)
-                       (= tx (:tx datom))))))
+       (complement
+        (partial datom=
+                 [e a v tx]))
        (datoms-filter
         (->Eduction
          (map
           bytes-to-datoms-xf)
          (set/slice tuples
-                      begin
-                      end))))))
+                    begin
+                    end))))))
 
   (-rseek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
