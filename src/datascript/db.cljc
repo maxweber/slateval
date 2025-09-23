@@ -946,7 +946,17 @@
                       [c0 c1 c2 c3])
           [e a v tx] (resolve-datom* db e a v tx)
           tuples (.-tuples db)
-          [begin end] (tuple-range "eavt")]
+          [begin _end] (apply tuple-range
+                              (name index)
+                              (take-while
+                               some?
+                               (rest
+                                (tuple-list index
+                                            [e
+                                             a
+                                             v
+                                             tx]))))
+          [_begin end] (tuple-range (name index))]
       (drop-while
        (complement
         (partial datom=
