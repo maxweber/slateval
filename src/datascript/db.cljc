@@ -941,10 +941,9 @@
 
   (-seek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
-    (let [[e a v tx] (case index
-                       :eavt [c0 c1 c2 c3]
-                       :aevt [c1 c0 c2 c3]
-                       :avet [c2 c0 c1 c3])
+    (let [[e a v tx] (sort-components
+                      index
+                      [c0 c1 c2 c3])
           [e a v tx] (resolve-datom* db e a v tx)
           tuples (.-tuples db)
           [begin end] (tuple-range "eavt")]
