@@ -846,6 +846,18 @@
        (or (not tx)
            (= tx (:tx datom)))))
 
+(defn pattern->order
+  [db pattern]
+  (let [[e a v tx] pattern]
+    (if e
+      :eavt
+      (if a
+        (if (indexing? db
+                       a)
+          :avet
+          :aevt)
+        :eavt))))
+
 (defrecord-updatable DB [schema tuples max-eid max-tx rschema pull-patterns pull-attrs hash]
   #?@(:cljs
       [IHash                (-hash  [db]        (hash-db db))
@@ -896,7 +908,18 @@
                         :cljs #(= v %))
           multival?  (contains? (-attrs-by db :db.cardinality/many) a)
           tuples (.-tuples db)
-          [begin end] (tuple-range "eavt")
+          index (pattern->order db
+                                pattern)
+          [begin end] (apply tuple-range
+                             (name index)
+                             (take-while
+                              some?
+                              (rest
+                               (tuple-list index
+                                           [e
+                                            a
+                                            v
+                                            tx]))))
           ]
       (filter
        (partial datom=
