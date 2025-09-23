@@ -828,7 +828,7 @@
          d1)))
    (partition-all 2 1 datoms)))
 
-(defrecord-updatable DB [schema eavt aevt avet max-eid max-tx rschema pull-patterns pull-attrs hash]
+(defrecord-updatable DB [schema tuples max-eid max-tx rschema pull-patterns pull-attrs hash]
   #?@(:cljs
       [IHash                (-hash  [db]        (hash-db db))
        IEquiv               (-equiv [db other]  (equiv-db db other))
@@ -850,15 +850,17 @@
       [Object               (hashCode [db]      (hash-db db))
        clojure.lang.IHashEq (hasheq [db]        (hash-db db))
        clojure.lang.IPersistentCollection
-       (count [db]         (count eavt))
+       (count [db]         (count (filter
+                                   (fn [tuple]
+                                     (= (first tuple)
+                                        "eavt"))
+                                   tuples)))
        (equiv [db other]   (equiv-db db other))
        clojure.lang.IEditableCollection 
        (empty [db]         (-> (restore-db
                                  {:schema  (.-schema db)
                                   :rschema (.-rschema db)
-                                  :eavt    (empty (.-eavt db))
-                                  :aevt    (empty (.-aevt db))
-                                  :avet    (empty (.-avet db))})
+                                  :tuples    (empty (.-tuples db))})
                              (with-meta (meta db))))
        (asTransient [db] (db-transient db))
        clojure.lang.ITransientCollection
@@ -872,11 +874,10 @@
   ISearch
   (-search [db pattern]
     (let [[e a v tx] pattern
-          eavt       (.-eavt db)
           pred       #?(:clj  (vpred v)
                         :cljs #(= v %))
           multival?  (contains? (-attrs-by db :db.cardinality/many) a)
-          tuples (.-eavt db)
+          tuples (.-tuples db)
           [begin end] (tuple-range "eavt")
           ]
       (filter
@@ -905,7 +906,7 @@
                        :aevt [c1 c0 c2 c3]
                        :avet [c2 c0 c1 c3])
           [e a v tx] (resolve-datom* db e a v tx)
-          tuples (.-eavt db)
+          tuples (.-tuples db)
           [begin end] (tuple-range "eavt")]
       (filter
        (fn [datom]
@@ -969,7 +970,7 @@
 
 (defn slice
   [case db order start-datom end-datom]
-  (let [index (.-eavt ^datascript.db.DB db)
+  (let [index (.-tuples ^datascript.db.DB db)
         take-count (inc (- (count case)
                            (count (take-while
                                    (fn [x]
@@ -1194,7 +1195,7 @@
     {:schema        schema
      :rschema       (rschema (merge implicit-schema schema))
 
-     :eavt          (set/sorted-set* (assoc opts :cmp byte-array-compare))
+     :tuples        (set/sorted-set* (assoc opts :cmp byte-array-compare))
      :max-eid       e0
      :max-tx        tx0
      :pull-patterns (lru/cache 100)
@@ -1288,7 +1289,7 @@
   (let [h @(.-hash db)]
     (if (zero? h)
       (reset! (.-hash db) (combine-hashes (hash (.-schema db))
-                            (hash (.-eavt db))))
+                            (hash (.-tuples db))))
       h)))
 
 (defn+ ^:private ^number hash-fdb [^FilteredDB db]
@@ -1663,17 +1664,17 @@
   (let [indexing? (indexing? db (.-a datom))]
     (if (datom-added datom)
       (cond-> db
-        true      (update :eavt set/conj (pack (datom-tuple :eavt datom)) byte-array-compare)
-        true      (update :eavt set/conj (pack (datom-tuple :aevt datom)) byte-array-compare)
-        indexing? (update :eavt set/conj (pack (datom-tuple :avet datom)) byte-array-compare)
+        true      (update :tuples set/conj (pack (datom-tuple :eavt datom)) byte-array-compare)
+        true      (update :tuples set/conj (pack (datom-tuple :aevt datom)) byte-array-compare)
+        indexing? (update :tuples set/conj (pack (datom-tuple :avet datom)) byte-array-compare)
         true      (advance-max-eid (.-e datom))
         true      (assoc :hash (atom 0)))
       (if-some [removing (some-> (fsearch db [(.-e datom) (.-a datom) (.-v datom)])
                                  (retract-datom (:tx datom)))]
         (cond-> db
-          true      (update :eavt set/conj (pack (datom-tuple :eavt removing)) byte-array-compare)
-          true      (update :eavt set/conj (pack (datom-tuple :aevt removing)) byte-array-compare)
-          indexing? (update :eavt set/conj (pack (datom-tuple :avet removing)) byte-array-compare)
+          true      (update :tuples set/conj (pack (datom-tuple :eavt removing)) byte-array-compare)
+          true      (update :tuples set/conj (pack (datom-tuple :aevt removing)) byte-array-compare)
+          indexing? (update :tuples set/conj (pack (datom-tuple :avet removing)) byte-array-compare)
           true      (assoc :hash (atom 0)))
         db))))
 

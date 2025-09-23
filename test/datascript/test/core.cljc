@@ -105,7 +105,7 @@
     (is (= (d/empty-db schema)
           (empty db)))
     (is (= 6 (count (d/datoms db :eavt))))
-    (is (= #{:schema :eavt :aevt :avet :max-eid :max-tx :rschema :pull-patterns :pull-attrs :hash}
+    (is (= #{:schema :tuples :max-eid :max-tx :rschema :pull-patterns :pull-attrs :hash}
           (set (keys db))))
     (is (map? db))
     (is (seqable? (:eavt db)))

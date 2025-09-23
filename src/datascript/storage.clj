@@ -79,7 +79,7 @@
 
 (defn storage-adapter ^StorageAdapter [db]
   (when db
-    (.-_storage ^PersistentSortedSet (:eavt db))))
+    (.-_storage ^PersistentSortedSet (:tuples db))))
 
 (defn storage [db]
   (when-some [adapter (storage-adapter db)]
