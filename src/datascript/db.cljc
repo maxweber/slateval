@@ -982,17 +982,13 @@
                                              v
                                              tx]))))
           [_begin end] (tuple-range (name index))]
-      (drop-while
-       (complement
-        (partial datom=
-                 [e a v tx]))
-       (datoms-filter
-        (->Eduction
-         (map
-          bytes-to-datoms-xf)
-         (set/slice tuples
-                    begin
-                    end))))))
+      (datoms-filter
+       (->Eduction
+        (map
+         bytes-to-datoms-xf)
+        (set/slice tuples
+                   begin
+                   end)))))
 
   (-rseek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
