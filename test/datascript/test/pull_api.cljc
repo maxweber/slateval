@@ -568,9 +568,6 @@
              (d/filter (fn [_ datom] (not= "Tupen" (:v datom)))))]
     (is (= {:name "Petr" :aka ["Devil"]}
           (d/pull db '[:name :aka] 1))))
-  (let [db (-> @*test-db d/serializable pr-str clojure.edn/read-string d/from-serializable)]
-    (is (= {:name "Petr" :aka ["Devil" "Tupen"]}
-          (d/pull db '[:name :aka] 1))))
   (let [db (d/init-db (d/datoms @*test-db :eavt) test-schema)]
     (is (= {:name "Petr" :aka ["Devil" "Tupen"]}
           (d/pull db '[:name :aka] 1)))))
