@@ -1003,9 +1003,24 @@
   (-index-range [db attr start end]
     (validate-indexed db :avet attr nil nil nil)
     (validate-attr attr (list '-index-range 'db attr start end))
-    (set/slice (.-avet db)
-      (resolve-datom db nil attr start nil e0 tx0)
-      (resolve-datom db nil attr end nil emax txmax)))
+    (let [tuples (.-tuples db)
+          [begin _end] (apply tuple-range
+                              "avet"
+                              (pr-str attr)
+                              (when start
+                                [start]))
+          [_begin end] (apply tuple-range
+                              "avet"
+                              (pr-str attr)
+                              (when end
+                                [end]))]
+      (datoms-filter
+       (->Eduction
+        (map
+         bytes-to-datoms-xf)
+        (set/slice tuples
+                   begin
+                   end)))))
                 
   clojure.data/EqualityPartition
   (equality-partition [x] :datascript/db)
