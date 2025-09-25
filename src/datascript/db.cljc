@@ -18,6 +18,8 @@
 
 (declare slice)
 
+(declare transact-tx-data)
+
 ;; ----------------------------------------------------------------------------
 
 #?(:cljs
@@ -1277,36 +1279,37 @@
                   res refs)]
     res))
 
+(defrecord TxReport [db-before db-after tx-data tempids tx-meta])
+
+(defn datoms->tx
+  [datoms]
+  (map
+   (fn [[e a v tx added]]
+     [(if added
+        :db/add
+        :db/retract)
+      e
+      a
+      v
+      tx])
+   datoms))
+
+(defn db-transact
+  [db tx]
+  (:db-after
+   (transact-tx-data
+    (->TxReport db db [] {} {} ;tx-meta
+                )
+    tx)))
+
 (defn ^DB init-db [datoms schema opts]
   (when-some [not-datom (first (drop-while datom? datoms))]
     (util/raise "init-db expects list of Datoms, got " (type not-datom)
-      {:error :init-db}))
+                {:error :init-db}))
   (validate-schema schema)
-  (let [rschema     (rschema (merge implicit-schema schema))
-        indexed     (:db/index rschema)
-        arr         (cond-> datoms
-                      (not (arrays/array? datoms)) (arrays/into-array))
-        _           (arrays/asort arr cmp-datoms-eavt-quick)
-        eavt        (set/from-sorted-array cmp-datoms-eavt arr (arrays/alength arr) opts)
-        _           (arrays/asort arr cmp-datoms-aevt-quick)
-        aevt        (set/from-sorted-array cmp-datoms-aevt arr (arrays/alength arr) opts)
-        avet-datoms (filter (fn [^Datom d] (contains? indexed (.-a d))) datoms)
-        avet-arr    (to-array avet-datoms)
-        _           (arrays/asort avet-arr cmp-datoms-avet-quick)
-        avet        (set/from-sorted-array cmp-datoms-avet avet-arr (arrays/alength avet-arr) opts)
-        max-eid     (init-max-eid rschema eavt avet)
-        max-tx      (transduce (map (fn [^Datom d] (datom-tx d))) max tx0 eavt)]
-    (map->DB
-      {:schema        schema
-       :rschema       rschema
-       :eavt          eavt
-       :aevt          aevt
-       :avet          avet
-       :max-eid       max-eid
-       :max-tx        max-tx
-       :pull-patterns (lru/cache 100)
-       :pull-attrs    (lru/cache 100)
-       :hash          (atom 0)})))
+  (let [db (empty-db schema opts)]
+    (db-transact db
+                 (datoms->tx datoms))))
 
 (defn+ ^DB restore-db [{:keys [schema eavt aevt avet max-eid max-tx] :as keys}]
   (map->DB
