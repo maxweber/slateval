@@ -1467,13 +1467,7 @@
 
 (defn find-datom [db index c0 c1 c2 c3]
   (validate-indexed db index c0 c1 c2 c3)
-  (let [set     (get db index)
-        cmp     #?(:clj (.comparator ^clojure.lang.Sorted set) :cljs (.-comparator set))
-        from    (components->pattern db index c0 c1 c2 c3 e0 tx0)
-        to      (components->pattern db index c0 c1 c2 c3 emax txmax)
-        datom   (some-> set seq (set/seek from) first)]
-    (when (and (some? datom) (<= 0 (cmp to datom)))
-      datom)))
+  (first (-datoms db index c0 c1 c2 c3)))
 
 ;; ----------------------------------------------------------------------------
 
