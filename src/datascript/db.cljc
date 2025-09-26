@@ -1055,16 +1055,18 @@
     (validate-indexed db :avet attr nil nil nil)
     (validate-attr attr (list '-index-range 'db attr start end))
     (let [tuples (.-tuples db)
+          [_ _ start*] (resolve-datom* db nil attr start nil)
           [begin _end] (apply tuple-range
                               "avet"
                               (pr-str attr)
-                              (when start
-                                [start]))
+                              (when start*
+                                [(serialize-value start*)]))
+          [_ _ end*] (resolve-datom* db nil attr end nil)
           [_begin end] (apply tuple-range
                               "avet"
                               (pr-str attr)
-                              (when end
-                                [end]))]
+                              (when end*
+                                [(serialize-value end*)]))]
       (->Eduction
        (comp (map bytes-to-datoms-xf)
              datoms-filter)
