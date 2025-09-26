@@ -817,18 +817,57 @@
    value, then the `:db/add` will be directly followed by a corresponding
    `:db/retract` datom, and the logic here will remove both from the returned
    sequence of `datoms`. All `:db/retract` datoms are removed in any case."
-  [datoms]
-  (keep
-   (fn [[d1 d2]]
-     (if-not (:added d1)
-       nil
-       (when-not (and (= (:e d1) (:e d2))
-                      (= (:a d1) (:a d2))
-                      (= (:v d1) (:v d2))
-                      (:added d1)
-                      (not (:added d2)))
-         d1)))
-   (partition-all 2 1 datoms)))
+  [rf]
+  (let [previous (volatile! nil)]
+    (fn
+      ([] (rf))
+      ([result]
+       (let [d1 @previous]
+         (if (:added d1)
+           (rf (rf result
+                   d1))
+           (rf result))))
+      ([result d2]
+       (if-not @previous
+         (do
+           (vreset! previous d2)
+           result)
+         (let [d1 @previous]
+           (let [eav= (and (= (:e d1) (:e d2))
+                           (= (:a d1) (:a d2))
+                           (= (:v d1) (:v d2)))]
+             (cond
+               (and eav=
+                    (:added d1)
+                    (not (:added d2)))
+               (do
+                 ;; (prn "later tx retract" d1 d2)
+                 (vreset! previous nil) ;; next step should ignore d2
+                 result) ;; do not add d1 since it was retracted by d2 in a later transaction
+
+               (and eav=
+                    (= (:tx d1)
+                       (:tx d2))
+                    (not (:added d1))
+                    (:added d2))
+               (do
+                 ;; (prn "same tx retract" d1 d2)
+                 (vreset! previous nil) ;; next step should ignore d2
+                 result) ;; add nothing since datom was retracted in the same transaction.
+
+               (not (:added d2))
+               (do
+                 ;; (prn "d2 retract" d1 d2)
+                 (vreset! previous d2)
+                 result)
+
+               :else
+               (do
+                 ;; (prn "else" d1 d2)
+                 (vreset! previous
+                          d2)
+                 (rf result d1))
+               ))))))))
 
 (defn sort-components
   [order [c0 c1 c2 c3]]
@@ -923,16 +962,14 @@
                                             v
                                             tx]))))
           ]
-      (filter
-       (partial datom=
-                [e a v tx])
-       (datoms-filter
-        (->Eduction
-         (map
-          bytes-to-datoms-xf)
-         (set/slice tuples
-                    begin
-                    end))))))
+      (->Eduction
+       (comp (map bytes-to-datoms-xf)
+             datoms-filter
+             (filter (partial datom=
+                              [e a v tx])))
+       (set/slice tuples
+                  begin
+                  end))))
 
   IIndexAccess
   (-datoms [db index c0 c1 c2 c3]
@@ -943,26 +980,25 @@
           datom-coll (resolve-datom* db e a v tx)
           [e a v tx] datom-coll
           tuples (.-tuples db)
-          [begin end] (apply tuple-range
-                             (name index)
-                             (take-while
+          components         (take-while
                               some?
                               (rest
                                (tuple-list index
                                            [e
                                             a
                                             v
-                                            tx]))))]
-      (filter
-       (partial datom=
-                [e a v tx])
-       (datoms-filter
-        (->Eduction
-         (map
-          bytes-to-datoms-xf)
-         (set/slice tuples
-                    begin
-                    end))))))
+                                            tx])))
+          [begin end] (apply tuple-range
+                             (name index)
+                             components)]
+      (->Eduction
+       (comp (map bytes-to-datoms-xf)
+             datoms-filter
+             (filter (partial datom=
+                              [e a v tx])))
+       (set/slice tuples
+                  begin
+                  end))))
 
   (-seek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
@@ -982,13 +1018,12 @@
                                              v
                                              tx]))))
           [_begin end] (tuple-range (name index))]
-      (datoms-filter
-       (->Eduction
-        (map
-         bytes-to-datoms-xf)
-        (set/slice tuples
-                   begin
-                   end)))))
+      (->Eduction
+       (comp (map bytes-to-datoms-xf)
+             datoms-filter)
+       (set/slice tuples
+                  begin
+                  end))))
 
   (-rseek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
@@ -1009,13 +1044,12 @@
                               (name index)
                               start)
           [begin _end] (tuple-range (name index))]
-      (datoms-filter
-       (->Eduction
-        (map
-         bytes-to-datoms-xf)
-        (set/rslice tuples
-                    end
-                    begin)))))
+      (->Eduction
+       (comp (map bytes-to-datoms-xf)
+             datoms-filter)
+       (set/rslice tuples
+                   end
+                   begin))))
 
   (-index-range [db attr start end]
     (validate-indexed db :avet attr nil nil nil)
@@ -1031,13 +1065,12 @@
                               (pr-str attr)
                               (when end
                                 [end]))]
-      (datoms-filter
-       (->Eduction
-        (map
-         bytes-to-datoms-xf)
-        (set/slice tuples
-                   begin
-                   end)))))
+      (->Eduction
+       (comp (map bytes-to-datoms-xf)
+             datoms-filter)
+       (set/slice tuples
+                  begin
+                  end))))
                 
   clojure.data/EqualityPartition
   (equality-partition [x] :datascript/db)
