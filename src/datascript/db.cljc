@@ -16,8 +16,6 @@
 
 #?(:clj (set! *warn-on-reflection* true))
 
-(declare slice)
-
 (declare transact-tx-data)
 
 ;; ----------------------------------------------------------------------------
@@ -1109,39 +1107,6 @@
                           nil
                           nil)
                  cmp-datoms-eav-quick)))
-
-(defn slice
-  [case db order start-datom end-datom]
-  (let [index (.-tuples ^datascript.db.DB db)
-        take-count (inc (- (count case)
-                           (count (take-while
-                                   (fn [x]
-                                     (= x '_))
-                                   (reverse case)))))
-        start-tuple (apply tuple
-                           (take-while identity
-                                       (tuple-list db
-                                                   order
-                                                   (case-pick case
-                                                              start-datom))))
-        start-bytes (pack start-tuple)
-        range (.range ^com.apple.foundationdb.tuple.Tuple start-tuple)
-        begin-bytes (.begin range)
-        end-bytes (.end range)]
-    #_(prn {:case case
-            :take-count take-count
-            :order order
-            :start-datom start-datom
-            :start-tuple start-tuple})
-    (->Eduction
-     (comp (map bytes-to-datoms-xf db)
-           (take-while (fn [datom]
-                         (or (not end-datom)
-                             (<= (cmp-datoms-eavt datom end-datom)
-                                 0)))))
-     (set/slice index
-                begin-bytes
-                end-bytes))))
 
 (defn db? [x]
   #?(:clj
