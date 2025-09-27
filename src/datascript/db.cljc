@@ -43,6 +43,8 @@
 (def ^:const implicit-schema
   {:db/ident {:db/unique :db.unique/identity}})
 
+(declare tuple?)
+
 ;; ----------------------------------------------------------------------------
 
 (defn #?@(:clj  [^Boolean seqable?]  
