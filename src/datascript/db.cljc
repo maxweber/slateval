@@ -1096,16 +1096,18 @@
 
   clojure.data/Diff
   (diff-similar [a b]
-    (diff-sorted (slice '[_ _ _ _]
-                        a
-                        :eavt
-                        nil
-                        nil)
-                 (slice '[_ _ _ _]
-                        b
-                        :eavt
-                        nil
-                        nil)
+    (diff-sorted (-datoms a
+                          :eavt
+                          nil
+                          nil
+                          nil
+                          nil)
+                 (-datoms b
+                          :eavt
+                          nil
+                          nil
+                          nil
+                          nil)
                  cmp-datoms-eav-quick)))
 
 (defn slice
