@@ -5,6 +5,38 @@
     [datascript.db :as db]
     [datascript.test.core :as tdc]))
 
+(deftest test-datoms-filter
+  (is (= (sequence
+          datascript.db/datoms-filter
+          [(db/datom 1 :aka "Devil" 536870915 true)
+           (db/datom 1 :aka "Devil" 536870918 false)
+           (db/datom 1 :aka "Tupen" 536870916 true)
+           (db/datom 1 :name "Ivan" 536870913 true)
+           (db/datom 1 :name "Ivan" 536870914 false)
+           (db/datom 1 :name "Petr" 536870914 true)
+           (db/datom 1 :name "Petr" 536870917 false)])
+         [(db/datom 1 :aka "Tupen" 536870916 true)]))
+  (is (= (sequence
+          datascript.db/datoms-filter
+          [(db/datom 1 :aka "Devil" 536870915 true)
+           (db/datom 1 :aka "Tupen" 536870916 true)
+           (db/datom 1 :name "Ivan" 536870913 true)
+           (db/datom 1 :name "Ivan" 536870914 false)
+           (db/datom 1 :name "Petr" 536870914 true)])
+         [(db/datom 1 :aka "Devil" 536870915 true)
+          (db/datom 1 :aka "Tupen" 536870916 true)
+          (db/datom 1 :name "Petr" 536870914 true)]))
+  (is (= (->Eduction
+          datascript.db/datoms-filter
+          [(db/datom 1 :aka "Devil" 536870915 true)
+           (db/datom 1 :aka "Tupen" 536870916 true)
+           (db/datom 1 :name "Ivan" 536870913 true)
+           (db/datom 1 :name "Ivan" 536870914 false)
+           (db/datom 1 :name "Petr" 536870914 true)])
+         [(db/datom 1 :aka "Devil" 536870915 true)
+          (db/datom 1 :aka "Tupen" 536870916 true)
+          (db/datom 1 :name "Petr" 536870914 true)])))
+
 (deftest test-with
   (let [db  (-> (d/empty-db {:aka {:db/cardinality :db.cardinality/many}})
               (d/db-with [[:db/add 1 :name "Ivan"]])
