@@ -219,7 +219,7 @@
         :let [name   (.-name attr)
               db     (.-db ^Context context)
               datoms (if (instance? DB db)
-                       (seq (db/slice '[_ a v _] db :avet (db/datom db/e0 name id db/tx0) (db/datom db/emax name id db/txmax)))
+                       (seq (db/-search db [nil name id nil]))
                        (db/-search db [nil name id]))]
 
         :do (visit context :db.pull/reverse nil name id)
