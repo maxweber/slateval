@@ -691,7 +691,7 @@
            components))
 
 (defn serialize-value
-  [v]
+  [db attr v]
   (cond
     (map? v)
     (nippy/freeze v)
@@ -699,20 +699,25 @@
     (keyword? v)
     (nippy/freeze v)
 
+    (vector? v)
+    (if (tuple? db attr)
+      (pr-str v)
+      (nippy/freeze v))
+
     :else
     v))
 
 (defn tuple-list
-  [order datom]
+  [db order datom]
   (try
     (let [[e a v t added] datom]
       (case (keyword order)
         :eavt
-        (list (name order) e (when a (pr-str a)) (serialize-value v) t added)
+        (list (name order) e (when a (pr-str a)) (serialize-value db a v) t added)
         :aevt
-        (list (name order) (when a (pr-str a)) e (serialize-value v) t added)
+        (list (name order) (when a (pr-str a)) e (serialize-value db a v) t added)
         :avet
-        (list (name order) (when a (pr-str a)) (serialize-value v) e t added)))
+        (list (name order) (when a (pr-str a)) (serialize-value db a v) e t added)))
     (catch Exception e
       (throw (ex-info "tuple-list failed"
                       {:order order
@@ -732,32 +737,36 @@
 (defn ^com.apple.foundationdb.tuple.Tuple datom-tuple
   "Converts a datom to a `com.apple.foundationdb.tuple.Tuple` and sorts the
    components according to the `order`."
-  ([order datom]
+  ([db order datom]
    (apply tuple
-          (tuple-list order
+          (tuple-list db
+                      order
                       datom)))
-  ([datom]
-   (datom-tuple :eavt
+  ([db datom]
+   (datom-tuple db
+                :eavt
                 datom)))
 
 (defn deserialize-value
-  [v]
+  [db attr v]
   (if (bytes? v)
     (nippy/thaw v)
-    v))
+    (if (tuple? db attr)
+      (edn/read-string v)
+      v)))
 
 (defn datom-from-tuple
   "Reads back a datom that was stored as `com.apple.foundationdb.tuple.Tuple`."
-  [tuple]
+  [db tuple]
   (try
     (let [[order c0 c1 c2 c3 c4] (vec tuple)]
       (case order
         "eavt"
-        (datom c0 (edn/read-string c1) (deserialize-value c2) c3 c4)
+        (datom c0 (edn/read-string c1) (deserialize-value db c1 c2) c3 c4)
         "aevt"
-        (datom c1 (edn/read-string c0) (deserialize-value c2) c3 c4)
+        (datom c1 (edn/read-string c0) (deserialize-value db c0 c2) c3 c4)
         "avet"
-        (datom c2 (edn/read-string c0) (deserialize-value c1) c3 c4)))
+        (datom c2 (edn/read-string c0) (deserialize-value db c0 c1) c3 c4)))
     (catch Exception e
       (throw (ex-info "datom-from-tuple failed"
                       {:tuple tuple}
@@ -768,17 +777,19 @@
   [^bytes bytes]
   (com.apple.foundationdb.tuple.Tuple/fromBytes bytes))
 
-(def bytes-to-datoms-xf
+(defn bytes-to-datoms-xf
+  [db]
   (comp
-   datom-from-tuple
+   (partial datom-from-tuple
+            db)
    tuple-from-bytes))
 
 (defn bytes-to-datoms
   "Converts a collection of byte array (`com.apple.foundationdb.tuple.Tuple`) into
    datoms."
-  [byte-tuples]
+  [db byte-tuples]
   (->Eduction
-   (map bytes-to-datoms-xf)
+   (map (bytes-to-datoms-xf db))
    byte-tuples))
 
 (defn byte-array-compare
@@ -956,14 +967,15 @@
                              (take-while
                               some?
                               (rest
-                               (tuple-list index
+                               (tuple-list db
+                                           index
                                            [e
                                             a
                                             v
                                             tx]))))
           ]
       (->Eduction
-       (comp (map bytes-to-datoms-xf)
+       (comp (map (bytes-to-datoms-xf db))
              datoms-filter
              (filter (partial datom=
                               [e a v tx])))
@@ -983,7 +995,8 @@
           components         (take-while
                               some?
                               (rest
-                               (tuple-list index
+                               (tuple-list db
+                                           index
                                            [e
                                             a
                                             v
@@ -992,7 +1005,7 @@
                              (name index)
                              components)]
       (->Eduction
-       (comp (map bytes-to-datoms-xf)
+       (comp (map (bytes-to-datoms-xf db))
              datoms-filter
              (filter (partial datom=
                               [e a v tx])))
@@ -1012,14 +1025,15 @@
                               (take-while
                                some?
                                (rest
-                                (tuple-list index
+                                (tuple-list db
+                                            index
                                             [e
                                              a
                                              v
                                              tx]))))
           [_begin end] (tuple-range (name index))]
       (->Eduction
-       (comp (map bytes-to-datoms-xf)
+       (comp (map (bytes-to-datoms-xf db))
              datoms-filter)
        (set/slice tuples
                   begin
@@ -1035,7 +1049,8 @@
           start (take-while
                  some?
                  (rest
-                  (tuple-list index
+                  (tuple-list db
+                              index
                               [e
                                a
                                v
@@ -1045,7 +1060,7 @@
                               start)
           [begin _end] (tuple-range (name index))]
       (->Eduction
-       (comp (map bytes-to-datoms-xf)
+       (comp (map (bytes-to-datoms-xf db))
              datoms-filter)
        (set/rslice tuples
                    end
@@ -1068,7 +1083,7 @@
                               (when end*
                                 [(serialize-value end*)]))]
       (->Eduction
-       (comp (map bytes-to-datoms-xf)
+       (comp (map (bytes-to-datoms-xf db))
              datoms-filter)
        (set/slice tuples
                   begin
@@ -1101,7 +1116,8 @@
                                    (reverse case)))))
         start-tuple (apply tuple
                            (take-while identity
-                                       (tuple-list order
+                                       (tuple-list db
+                                                   order
                                                    (case-pick case
                                                               start-datom))))
         start-bytes (pack start-tuple)
@@ -1114,7 +1130,7 @@
             :start-datom start-datom
             :start-tuple start-tuple})
     (->Eduction
-     (comp (map bytes-to-datoms-xf)
+     (comp (map bytes-to-datoms-xf db)
            (take-while (fn [datom]
                          (or (not end-datom)
                              (<= (cmp-datoms-eavt datom end-datom)
@@ -1782,17 +1798,17 @@
   (let [indexing? (indexing? db (.-a datom))]
     (if (datom-added datom)
       (cond-> db
-        true      (update :tuples set/conj (pack (datom-tuple :eavt datom)) byte-array-compare)
-        true      (update :tuples set/conj (pack (datom-tuple :aevt datom)) byte-array-compare)
-        indexing? (update :tuples set/conj (pack (datom-tuple :avet datom)) byte-array-compare)
+        true      (update :tuples set/conj (pack (datom-tuple db :eavt datom)) byte-array-compare)
+        true      (update :tuples set/conj (pack (datom-tuple db :aevt datom)) byte-array-compare)
+        indexing? (update :tuples set/conj (pack (datom-tuple db :avet datom)) byte-array-compare)
         true      (advance-max-eid (.-e datom))
         true      (assoc :hash (atom 0)))
       (if-some [removing (some-> (fsearch db [(.-e datom) (.-a datom) (.-v datom)])
                                  (retract-datom (:tx datom)))]
         (cond-> db
-          true      (update :tuples set/conj (pack (datom-tuple :eavt removing)) byte-array-compare)
-          true      (update :tuples set/conj (pack (datom-tuple :aevt removing)) byte-array-compare)
-          indexing? (update :tuples set/conj (pack (datom-tuple :avet removing)) byte-array-compare)
+          true      (update :tuples set/conj (pack (datom-tuple db :eavt removing)) byte-array-compare)
+          true      (update :tuples set/conj (pack (datom-tuple db :aevt removing)) byte-array-compare)
+          indexing? (update :tuples set/conj (pack (datom-tuple db :avet removing)) byte-array-compare)
           true      (assoc :hash (atom 0)))
         db))))
 
