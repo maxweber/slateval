@@ -717,7 +717,10 @@
         :aevt
         (list (name order) (when a (pr-str a)) e (serialize-value db a v) t added)
         :avet
-        (list (name order) (when a (pr-str a)) (serialize-value db a v) e t added)))
+        (list (name order) (when a (pr-str a)) (serialize-value db a v) e t added)
+        :teav
+        (list (name order) t e (when a (pr-str a)) (serialize-value db a v) added)
+        ))
     (catch Exception e
       (throw (ex-info "tuple-list failed"
                       {:order order
@@ -766,7 +769,9 @@
         "aevt"
         (datom c1 (edn/read-string c0) (deserialize-value db c0 c2) c3 c4)
         "avet"
-        (datom c2 (edn/read-string c0) (deserialize-value db c0 c1) c3 c4)))
+        (datom c2 (edn/read-string c0) (deserialize-value db c0 c1) c3 c4)
+        "teav"
+        (datom c1 (edn/read-string c2) (deserialize-value db c2 c3) c0 c4)))
     (catch Exception e
       (throw (ex-info "datom-from-tuple failed"
                       {:tuple tuple}
@@ -797,6 +802,11 @@
   (java.util.Arrays/compareUnsigned
    a
    b))
+
+(def byte-array-comparator
+  (reify java.util.Comparator
+    (compare [_ a b]
+      (byte-array-compare ^bytes a ^bytes b))))
 
 (defn pack
   [^com.apple.foundationdb.tuple.Tuple tuple]
@@ -885,7 +895,9 @@
   (case order
     :eavt [c0 c1 c2 c3]
     :aevt [c1 c0 c2 c3]
-    :avet [c2 c0 c1 c3]))
+    :avet [c2 c0 c1 c3]
+    :teav [c3 c0 c1 c2]
+    ))
 
 (defn datom=
   [[e a v tx] datom]
@@ -959,7 +971,7 @@
           pred       #?(:clj  (vpred v)
                         :cljs #(= v %))
           multival?  (contains? (-attrs-by db :db.cardinality/many) a)
-          tuples (.-tuples db)
+          tuples ^java.util.NavigableSet (.-tuples db)
           index (pattern->order db
                                 pattern)
           [begin end] (apply tuple-range
@@ -976,12 +988,17 @@
           ]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
+             (filter (fn [datom]
+                       (<= (:tx datom)
+                           (:max-tx db))))
              datoms-filter
              (filter (partial datom=
                               [e a v tx])))
-       (set/slice tuples
-                  begin
-                  end))))
+       (.subSet tuples
+                begin
+                true
+                end
+                true))))
 
   IIndexAccess
   (-datoms [db index c0 c1 c2 c3]
@@ -991,7 +1008,7 @@
                       [c0 c1 c2 c3])
           datom-coll (resolve-datom* db e a v tx)
           [e a v tx] datom-coll
-          tuples (.-tuples db)
+          tuples ^java.util.NavigableSet (.-tuples db)
           components         (take-while
                               some?
                               (rest
@@ -1006,12 +1023,17 @@
                              components)]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
+             (filter (fn [datom]
+                       (<= (:tx datom)
+                           (:max-tx db))))
              datoms-filter
              (filter (partial datom=
                               [e a v tx])))
-       (set/slice tuples
-                  begin
-                  end))))
+       (.subSet tuples
+                begin
+                true
+                end
+                true))))
 
   (-seek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
@@ -1019,7 +1041,7 @@
                       index
                       [c0 c1 c2 c3])
           [e a v tx] (resolve-datom* db e a v tx)
-          tuples (.-tuples db)
+          tuples ^java.util.NavigableSet (.-tuples db)
           [begin _end] (apply tuple-range
                               (name index)
                               (take-while
@@ -1034,10 +1056,15 @@
           [_begin end] (tuple-range (name index))]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
+             (filter (fn [datom]
+                       (<= (:tx datom)
+                           (:max-tx db))))
              datoms-filter)
-       (set/slice tuples
-                  begin
-                  end))))
+       (.subSet tuples
+                begin
+                true
+                end
+                true))))
 
   (-rseek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
@@ -1045,7 +1072,7 @@
                       index
                       [c0 c1 c2 c3])
           [e a v tx] (resolve-datom* db e a v tx)
-          tuples (.-tuples db)
+          tuples ^java.util.NavigableSet (.-tuples db)
           start (take-while
                  some?
                  (rest
@@ -1061,10 +1088,15 @@
           [begin _end] (tuple-range (name index))]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
+             (filter (fn [datom]
+                       (<= (:tx datom)
+                           (:max-tx db))))
              datoms-filter)
-       (set/rslice tuples
-                   end
-                   begin))))
+       (.subSet (.descendingSet tuples)
+                end
+                true
+                begin
+                true))))
 
   (-index-range [db attr start end]
     (validate-indexed db :avet attr nil nil nil)
@@ -1303,7 +1335,8 @@
     {:schema        schema
      :rschema       (rschema (merge implicit-schema schema))
 
-     :tuples        (set/sorted-set* (assoc opts :cmp byte-array-compare))
+     :tuples        (java.util.TreeSet.
+                     ^java.util.Comparator byte-array-comparator)
      :max-eid       e0
      :max-tx        tx0
      :pull-patterns (lru/cache 100)
@@ -1762,22 +1795,46 @@
          tx
          false))
 
+(defn set-add!
+  [db tuple]
+  (let [^java.util.Set tuples (:tuples db)]
+    (.add tuples
+          (pack tuple)))
+  db)
+
+(defn q-max-tx
+  [db]
+  (let [tuples ^java.util.NavigableSet (:tuples db)
+        [begin end] (tuple-range "teav")]
+    (or (some->
+         (.subSet (.descendingSet tuples)
+                  end
+                  true
+                  begin
+                  true)
+         (first)
+         (tuple-from-bytes)
+         (second))
+        tx0)))
+
 (defn with-datom [db ^Datom datom]
   (validate-datom db datom)
   (let [indexing? (indexing? db (.-a datom))]
     (if (datom-added datom)
       (cond-> db
-        true      (update :tuples set/conj (pack (datom-tuple db :eavt datom)) byte-array-compare)
-        true      (update :tuples set/conj (pack (datom-tuple db :aevt datom)) byte-array-compare)
-        indexing? (update :tuples set/conj (pack (datom-tuple db :avet datom)) byte-array-compare)
+        true      (set-add! (datom-tuple db :eavt datom))
+        true      (set-add! (datom-tuple db :aevt datom))
+        indexing? (set-add! (datom-tuple db :avet datom))
+        true      (set-add! (datom-tuple db :teav datom))
         true      (advance-max-eid (.-e datom))
         true      (assoc :hash (atom 0)))
       (if-some [removing (some-> (fsearch db [(.-e datom) (.-a datom) (.-v datom)])
                                  (retract-datom (:tx datom)))]
         (cond-> db
-          true      (update :tuples set/conj (pack (datom-tuple db :eavt removing)) byte-array-compare)
-          true      (update :tuples set/conj (pack (datom-tuple db :aevt removing)) byte-array-compare)
-          indexing? (update :tuples set/conj (pack (datom-tuple db :avet removing)) byte-array-compare)
+          true      (set-add! (datom-tuple db :eavt removing))
+          true      (set-add! (datom-tuple db :aevt removing))
+          indexing? (set-add! (datom-tuple db :avet removing))
+          true      (set-add! (datom-tuple db :teav removing))
           true      (assoc :hash (atom 0)))
         db))))
 

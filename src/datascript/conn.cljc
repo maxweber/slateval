@@ -24,6 +24,12 @@
   ([db tx-data] (with db tx-data nil))
   ([db tx-data tx-meta]
    {:pre [(db/db? db)]}
+   (let [q-max-tx (db/q-max-tx db)]
+     (when-not (<= q-max-tx
+                   (:max-tx db))
+       (throw (ex-info "underlying tuple store has already been modified"
+                       {:max-tx (:max-tx db)
+                        :q-max-tx q-max-tx}))))
    (if (instance? FilteredDB db)
      (throw (ex-info "Filtered DB cannot be modified" {:error :transaction/filtered}))
      (db/transact-tx-data (db/->TxReport db db [] {} tx-meta) tx-data))))
@@ -44,14 +50,7 @@
 
 (defn conn-from-db [db]
   {:pre [(db/db? db)]}
-  (if-some [storage (storage/storage db)]
-    (do
-      (storage/store db)
-      (make-conn
-        {:db db
-         :tx-tail []
-         :db-last-stored db}))
-    (make-conn {:db db})))
+  (make-conn {:db db}))
 
 (defn conn-from-datoms
   ([datoms]
@@ -88,22 +87,6 @@
         (let [r (with db tx-data tx-meta)]
           (vreset! *report r)
           (:db-after r))))
-    #?(:clj
-       (when-some [storage (storage/storage @conn)]
-         (let [{db     :db-after
-                datoms :tx-data} @*report
-               settings (set/settings (:eavt db))
-               *atom    (:atom conn)
-               tx-tail' (:tx-tail (swap! *atom update :tx-tail conj datoms))]
-           (if (> (transduce (map count) + 0 tx-tail') (:branching-factor settings))
-             ;; overflow tail
-             (do
-               (storage/store-impl! db (storage/storage-adapter db) false)
-               (swap! *atom assoc
-                 :tx-tail []
-                 :db-last-stored db))
-             ;; just update tail
-             (storage/store-tail db tx-tail')))))
     @*report))
 
 (defn transact!
