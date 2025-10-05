@@ -933,6 +933,53 @@
           :aevt)
         :eavt))))
 
+(defn slice
+  [{:keys [db ^bytes begin ^bytes end]}]
+  (reify java.lang.Iterable
+    (iterator [_]
+      (let [^java.sql.Connection conn (get-sqlite-connection db)
+            ^java.sql.PreparedStatement stmt
+            (.prepareStatement conn
+                               "select k from dbval where k >= ? and k < ?"
+                               java.sql.ResultSet/TYPE_FORWARD_ONLY
+                               java.sql.ResultSet/CONCUR_READ_ONLY)
+            _ (.setBytes stmt 1 begin)
+            _ (.setBytes stmt 2 end)
+            _ (.setFetchSize ^java.sql.Statement stmt 1000) ; hint (SQLite may ignore)
+            ^java.sql.ResultSet rs (.executeQuery stmt)
+
+            next-val (atom nil)
+            advanced (atom false)
+            closed   (atom false)
+            close!   (fn []
+                       (when-not @closed
+                         (reset! closed true)
+                         (try (.close rs)   (catch Throwable _))
+                         (try (.close stmt) (catch Throwable _))
+                         (try (.close conn) (catch Throwable _))))
+            advance! (fn []
+                       (when-not @closed
+                         (if (.next rs)
+                           (do (reset! next-val (.getBytes rs "k")) true)
+                           (do (reset! next-val nil) (close!) false))))]
+
+        (reify java.util.Iterator
+          (hasNext [_]
+            (or @advanced
+                (let [ok (advance!)]
+                  (reset! advanced ok)
+                  ok)))
+          (next [_]
+            (let [ok (or @advanced (advance!))]
+              (when-not ok
+                (throw (java.util.NoSuchElementException.)))
+              (let [v @next-val]
+                (reset! advanced false)
+                (reset! next-val nil)
+                v)))
+          (remove [_]
+            (throw (UnsupportedOperationException. "remove not supported"))))))))
+
 (defrecord-updatable DB [schema tuples max-eid max-tx rschema pull-patterns pull-attrs hash]
   #?@(:cljs
       [IHash                (-hash  [db]        (hash-db db))
@@ -1005,11 +1052,9 @@
              datoms-filter
              (filter (partial datom=
                               [e a v tx])))
-       (.subSet tuples
-                begin
-                true
-                end
-                true))))
+       (slice {:db db
+               :begin begin
+               :end end}))))
 
   IIndexAccess
   (-datoms [db index c0 c1 c2 c3]
@@ -1019,7 +1064,6 @@
                       [c0 c1 c2 c3])
           datom-coll (resolve-datom* db e a v tx)
           [e a v tx] datom-coll
-          tuples ^java.util.NavigableSet (.-tuples db)
           components         (take-while
                               some?
                               (rest
@@ -1034,17 +1078,15 @@
                              components)]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
-             (filter (fn [datom]
-                       (<= (:tx datom)
-                           (:max-tx db))))
-             datoms-filter
-             (filter (partial datom=
-                              [e a v tx])))
-       (.subSet tuples
-                begin
-                true
-                end
-                true))))
+               (filter (fn [datom]
+                         (<= (:tx datom)
+                             (:max-tx db))))
+               datoms-filter
+               (filter (partial datom=
+                                [e a v tx])))
+       (slice {:db db
+               :begin begin
+               :end end}))))
 
   (-seek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
@@ -1071,11 +1113,9 @@
                        (<= (:tx datom)
                            (:max-tx db))))
              datoms-filter)
-       (.subSet tuples
-                begin
-                true
-                end
-                true))))
+       (slice {:db db
+               :begin begin
+               :end end}))))
 
   (-rseek-datoms [db index c0 c1 c2 c3]
     (validate-indexed db index c0 c1 c2 c3)
@@ -1340,21 +1380,68 @@
 
             (when (= :db.cardinality/many (:db/cardinality (get schema attr)))
               (util/raise a " :db/tupleAttrs can’t depend on :db.cardinality/many attribute: " attr ex-data))))))))
+
+(defn- sqlite-jdbc-url
+  "Builds a full SQLite JDBC URL with optional pragmas."
+  [db-file {:keys [busy-timeout-ms foreign-keys? wal? read-only? mmap-size sync]
+            :or   {busy-timeout-ms 5000
+                   foreign-keys?   true
+                   wal?            true
+                   read-only?      false
+                   sync            "NORMAL"}}]
+  (let [params (cond-> {"busy_timeout" busy-timeout-ms
+                        "foreign_keys" (if foreign-keys? "on" "off")
+                        "synchronous"  (str sync)}
+                 wal?       (assoc "journal_mode" "WAL")
+                 read-only? (assoc "mode" "ro")
+                 mmap-size  (assoc "mmap_size" mmap-size))
+        qs     (->> params
+                    (map (fn [[k v]] (str k "=" v)))
+                    (str/join "&"))]
+    (str "jdbc:sqlite:" db-file (when (seq qs) (str "?" qs)))))
+
+(defn ^java.sql.Connection get-sqlite-connection
+  "Returns a java.sql.Connection for the given SQLite file.
+   Caller must close the connection manually."
+  [{:keys [db-file opts]}]
+  ;; explicitly load the driver class
+  (java.lang.Class/forName "org.sqlite.JDBC")
+  (let [^String url (sqlite-jdbc-url db-file opts)]
+    (java.sql.DriverManager/getConnection url)))
+
+(defn execute-sql!
+  "Executes a single SQL statement using the given java.sql.Connection.
+   Returns true if the statement returned a ResultSet, or false for an update/count.
+   Example:
+     (execute-sql! conn \"create table if not exists users (id integer primary key, name text)\")"
+  [^java.sql.Connection conn ^String sql]
+  (with-open [stmt (.createStatement conn)]
+    (.execute ^java.sql.Statement stmt sql)))
+
+(defn create-table!
+  [^java.sql.Connection conn]
+  ;; Create a table
+  (execute-sql! conn "create table if not exists dbval (k blob not null, primary key(k)) WITHOUT ROWID;"))
+
   
 (defn ^DB empty-db [schema opts]
   {:pre [(or (nil? schema) (map? schema))]}
   (validate-schema schema)
-  (map->DB
-    {:schema        schema
-     :rschema       (rschema (merge implicit-schema schema))
-
-     :tuples        (java.util.TreeSet.
-                     ^java.util.Comparator byte-array-comparator)
-     :max-eid       e0
-     :max-tx        tx0
-     :pull-patterns (lru/cache 100)
-     :pull-attrs    (lru/cache 100)
-     :hash          (atom 0)}))
+  (let [db-file (str (random-uuid)
+                     ".db")]
+    (with-open [conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})]
+      (create-table! conn))
+    (map->DB
+     {:schema        schema
+      :rschema       (rschema (merge implicit-schema schema))
+      :db-file       db-file
+      :tuples        (java.util.TreeSet.
+                      ^java.util.Comparator byte-array-comparator)
+      :max-eid       e0
+      :max-tx        tx0
+      :pull-patterns (lru/cache 100)
+      :pull-attrs    (lru/cache 100)
+      :hash          (atom 0)})))
 
 (defn- init-max-eid [rschema eavt avet]
   (let [max     #(if (and %2 (> %2 %1)) %2 %1)
@@ -1810,9 +1897,17 @@
 
 (defn set-add!
   [db tuple]
-  (let [^java.util.Set tuples (:tuples db)]
-    (.add tuples
-          (pack tuple)))
+  (try
+    (with-open [conn ^java.sql.Connection (get-sqlite-connection db)
+                stmt (.prepareStatement conn "INSERT INTO dbval (k) VALUES (?)")]
+      (.setBytes ^java.sql.PreparedStatement stmt
+                 1
+                 (pack tuple))
+      (.executeUpdate ^java.sql.PreparedStatement stmt))
+    (catch Exception e
+      (throw (ex-info "set-add! failed"
+                      {:tuple tuple}
+                      e))))
   db)
 
 (defn q-max-tx
