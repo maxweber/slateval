@@ -1444,7 +1444,7 @@
   (let [h @(.-hash db)]
     (if (zero? h)
       (reset! (.-hash db) (combine-hashes (hash (.-schema db))
-                            (hash (.-tuples db))))
+                            (hash-unordered-coll (-datoms db :eavt nil nil nil nil))))
       h)))
 
 (defn+ ^:private ^number hash-fdb [^FilteredDB db]
