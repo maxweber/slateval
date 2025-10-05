@@ -65,10 +65,11 @@
             (d/datoms db :avet :name "Ivan" 1))))
     
     (testing "Sequence compare issue-470"
-      (let [db (-> (d/empty-db {:path {:db/index true}})
-                 (d/db-with [{:db/id 1 :path [1 2]}
-                             {:db/id 2 :path [1 2 3]}]))]
-        (are [value result] (= result (mapv :e (d/datoms db :avet :path value)))
+      (let [db* (fn []
+                  (-> (d/empty-db {:path {:db/index true}})
+                      (d/db-with [{:db/id 1 :path [1 2]}
+                                  {:db/id 2 :path [1 2 3]}])))]
+        (are [value result] (= result (mapv :e (d/datoms (db*) :avet :path value)))
           [1]                 []
           [1 1]               []
           [1 2]               [1]
