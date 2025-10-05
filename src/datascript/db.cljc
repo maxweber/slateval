@@ -1112,25 +1112,27 @@
   (-index-range [db attr start end]
     (validate-indexed db :avet attr nil nil nil)
     (validate-attr attr (list '-index-range 'db attr start end))
-    (let [tuples (.-tuples db)
+    (let [tuples ^java.util.NavigableSet (.-tuples db)
           [_ _ start*] (resolve-datom* db nil attr start nil)
           [begin _end] (apply tuple-range
                               "avet"
                               (pr-str attr)
                               (when start*
-                                [(serialize-value start*)]))
+                                [(serialize-value db attr start*)]))
           [_ _ end*] (resolve-datom* db nil attr end nil)
           [_begin end] (apply tuple-range
                               "avet"
                               (pr-str attr)
                               (when end*
-                                [(serialize-value end*)]))]
+                                [(serialize-value db attr end*)]))]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
              datoms-filter)
-       (set/slice tuples
-                  begin
-                  end))))
+       (.subSet tuples
+                begin
+                true
+                end
+                true))))
                 
   clojure.data/EqualityPartition
   (equality-partition [x] :datascript/db)
