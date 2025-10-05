@@ -690,6 +690,19 @@
            ^java.util.List
            components))
 
+(defn serialize-tuple
+  [x]
+  (cond
+    (keyword? x)
+    (pr-str x)
+
+    (sequential? x)
+    (apply tuple
+           (map serialize-tuple
+                x))
+    :else
+    x))
+
 (defn serialize-value
   [db attr v]
   (cond
@@ -699,10 +712,8 @@
     (keyword? v)
     (nippy/freeze v)
 
-    (vector? v)
-    (if (tuple? db attr)
-      (pr-str v)
-      (nippy/freeze v))
+    (sequential? v)
+    (serialize-tuple v)
 
     :else
     v))
