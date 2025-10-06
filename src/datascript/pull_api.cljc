@@ -219,7 +219,7 @@
         :let [name   (.-name attr)
               db     (.-db ^Context context)
               datoms (if (instance? DB db)
-                       (seq (db/slice '[_ a v _] db :avet (db/datom db/e0 name id db/tx0) (db/datom db/emax name id db/txmax)))
+                       (seq (db/-search db [nil name id nil]))
                        (db/-search db [nil name id]))]
 
         :do (visit context :db.pull/reverse nil name id)
@@ -274,7 +274,7 @@
   (let [db (.-db context)
         datoms (util/cond+
                  (and (.-wildcard? pattern) (instance? DB db))
-                 (seq (db/slice '[e _ _ _] db :eavt (db/datom id nil nil db/tx0) (db/datom id nil nil db/txmax)))
+                 (seq (db/-datoms db :eavt id nil nil nil))
                  
                  (.-wildcard? pattern)
                  (db/-search db [id])
@@ -286,7 +286,13 @@
                        to   (.-name ^PullAttr (.-last-attr pattern))]
                  
                  (instance? DB db)
-                 (set/slice (.-eavt ^DB db) (db/datom id from nil db/tx0) (db/datom id to nil db/txmax))
+                 (take-while (fn [datom]
+                               (and (= (:e datom)
+                                       id)
+                                    (<= (compare (:a datom)
+                                                 to)
+                                        0)))
+                             (db/-seek-datoms db :eavt id from nil nil))
 
                  :else
                  (->> (db/-seek-datoms db :eavt id nil nil nil))

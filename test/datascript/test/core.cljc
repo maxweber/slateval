@@ -104,12 +104,12 @@
               {:db/id 2 :name "Petr" :age 37 :huh? false}])]
     (is (= (d/empty-db schema)
           (empty db)))
-    (is (= 6 (count db)))
-    (is (= #{:schema :eavt :aevt :avet :max-eid :max-tx :rschema :pull-patterns :pull-attrs :hash}
+    (is (= 6 (count (d/datoms db :eavt))))
+    (is (= #{:schema :tuples :max-eid :max-tx :rschema :pull-patterns :pull-attrs :hash}
           (set (keys db))))
     (is (map? db))
     (is (seqable? (:eavt db)))
-    (is (= (set (seq (:eavt db)))
+    (is (= (set (d/datoms db :eavt))
           #{(d/datom 1 :aka "IV")
             (d/datom 1 :aka "Terrible")
             (d/datom 1 :name "Ivan")

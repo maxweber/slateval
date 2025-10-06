@@ -34,24 +34,24 @@
               #{["Devil"] ["Tupen"]}))))))
 
 (deftest test-explode-ref
-  (let [db0 (d/empty-db {:children {:db/valueType :db.type/ref
-                                    :db/cardinality :db.cardinality/many}})]
+  (let [db0* (fn [] (d/empty-db {:children {:db/valueType :db.type/ref
+                                            :db/cardinality :db.cardinality/many}}))]
     (doseq [children [[-2 -3]
                       #{-2 -3}
                       (list -2 -3)]]
       (testing (str "ref + many + " children) 
-        (let [db (d/db-with db0 [{:db/id -1, :name "Ivan", :children children}
-                                 {:db/id -2, :name "Petr"} 
-                                 {:db/id -3, :name "Evgeny"}])]
+        (let [db (d/db-with (db0*) [{:db/id -1, :name "Ivan", :children children}
+                                    {:db/id -2, :name "Petr"}
+                                    {:db/id -3, :name "Evgeny"}])]
           (is (= #{["Petr"] ["Evgeny"]}
                 (d/q '[:find ?n
                        :where
                        [_ :children ?e]
                        [?e :name ?n]] db))))))
     
-    (let [db (d/db-with db0 [{:db/id -1, :name "Ivan"}
-                             {:db/id -2, :name "Petr", :_children -1} 
-                             {:db/id -3, :name "Evgeny", :_children -1}])]
+    (let [db (d/db-with (db0*) [{:db/id -1, :name "Ivan"}
+                                {:db/id -2, :name "Petr", :_children -1}
+                                {:db/id -3, :name "Evgeny", :_children -1}])]
       (is (= #{["Petr"] ["Evgeny"]}
             (d/q '[:find ?n
                    :where
@@ -59,14 +59,14 @@
                    [?e :name ?n]] db))))
     
     (is (thrown-msg? "Bad attribute :_parent: reverse attribute name requires {:db/valueType :db.type/ref} in schema"
-          (d/db-with db0 [{:name "Sergey" :_parent 1}])))))
+                     (d/db-with (db0*) [{:name "Sergey" :_parent 1}])))))
 
 (deftest test-explode-nested-maps
   (let [schema {:profile {:db/valueType :db.type/ref}}
-        db     (d/empty-db schema)]
+        db*    (fn [] (d/empty-db schema))]
     (are [tx res] (= res (d/q '[:find ?e ?a ?v
                                 :where [?e ?a ?v]]
-                           (d/db-with db tx)))
+                              (d/db-with (db*) tx)))
       [{:db/id 5 :name "Ivan" :profile {:db/id 7 :email "@2"}}]
       #{[5 :name "Ivan"] [5 :profile 7] [7 :email "@2"]}
          
@@ -83,10 +83,10 @@
   (testing "multi-valued"
     (let [schema {:profile {:db/valueType :db.type/ref
                             :db/cardinality :db.cardinality/many}}
-          db     (d/empty-db schema)]
+          db*    (fn [] (d/empty-db schema))]
       (are [tx res] (= res (d/q '[:find ?e ?a ?v
                                   :where [?e ?a ?v]]
-                             (d/db-with db tx)))
+                                (d/db-with (db*) tx)))
         [{:db/id 5 :name "Ivan" :profile {:db/id 7 :email "@2"}}]
         #{[5 :name "Ivan"] [5 :profile 7] [7 :email "@2"]}
            
