@@ -1427,8 +1427,10 @@
 (defn ^DB empty-db [schema opts]
   {:pre [(or (nil? schema) (map? schema))]}
   (validate-schema schema)
-  (let [db-file (str (random-uuid)
-                     ".db")]
+  (let [db-file (or (:db-file opts)
+                    (.getCanonicalPath
+                     (java.io.File/createTempFile (str (random-uuid))
+                                                  ".db")))]
     (with-open [conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})]
       (create-table! conn))
     (map->DB
