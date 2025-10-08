@@ -933,6 +933,34 @@
           :aevt)
         :eavt))))
 
+(defn- sqlite-jdbc-url
+  "Builds a full SQLite JDBC URL with optional pragmas."
+  [db-file {:keys [busy-timeout-ms foreign-keys? wal? read-only? mmap-size sync]
+            :or   {busy-timeout-ms 5000
+                   foreign-keys?   true
+                   wal?            true
+                   read-only?      false
+                   sync            "NORMAL"}}]
+  (let [params (cond-> {"busy_timeout" busy-timeout-ms
+                        "foreign_keys" (if foreign-keys? "on" "off")
+                        "synchronous"  (str sync)}
+                 wal?       (assoc "journal_mode" "WAL")
+                 read-only? (assoc "mode" "ro")
+                 mmap-size  (assoc "mmap_size" mmap-size))
+        qs     (->> params
+                    (map (fn [[k v]] (str k "=" v)))
+                    (str/join "&"))]
+    (str "jdbc:sqlite:" db-file (when (seq qs) (str "?" qs)))))
+
+(defn ^java.sql.Connection get-sqlite-connection
+  "Returns a java.sql.Connection for the given SQLite file.
+   Caller must close the connection manually."
+  [{:keys [db-file opts]}]
+  ;; explicitly load the driver class
+  (java.lang.Class/forName "org.sqlite.JDBC")
+  (let [^String url (sqlite-jdbc-url db-file opts)]
+    (java.sql.DriverManager/getConnection url)))
+
 (defn slice
   [{:keys [db ^bytes begin ^bytes end]}]
   (reify java.lang.Iterable
@@ -1380,34 +1408,6 @@
 
             (when (= :db.cardinality/many (:db/cardinality (get schema attr)))
               (util/raise a " :db/tupleAttrs can’t depend on :db.cardinality/many attribute: " attr ex-data))))))))
-
-(defn- sqlite-jdbc-url
-  "Builds a full SQLite JDBC URL with optional pragmas."
-  [db-file {:keys [busy-timeout-ms foreign-keys? wal? read-only? mmap-size sync]
-            :or   {busy-timeout-ms 5000
-                   foreign-keys?   true
-                   wal?            true
-                   read-only?      false
-                   sync            "NORMAL"}}]
-  (let [params (cond-> {"busy_timeout" busy-timeout-ms
-                        "foreign_keys" (if foreign-keys? "on" "off")
-                        "synchronous"  (str sync)}
-                 wal?       (assoc "journal_mode" "WAL")
-                 read-only? (assoc "mode" "ro")
-                 mmap-size  (assoc "mmap_size" mmap-size))
-        qs     (->> params
-                    (map (fn [[k v]] (str k "=" v)))
-                    (str/join "&"))]
-    (str "jdbc:sqlite:" db-file (when (seq qs) (str "?" qs)))))
-
-(defn ^java.sql.Connection get-sqlite-connection
-  "Returns a java.sql.Connection for the given SQLite file.
-   Caller must close the connection manually."
-  [{:keys [db-file opts]}]
-  ;; explicitly load the driver class
-  (java.lang.Class/forName "org.sqlite.JDBC")
-  (let [^String url (sqlite-jdbc-url db-file opts)]
-    (java.sql.DriverManager/getConnection url)))
 
 (defn execute-sql!
   "Executes a single SQL statement using the given java.sql.Connection.
