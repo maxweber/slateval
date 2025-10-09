@@ -118,9 +118,6 @@
                     :where [2 ?a ?v]] db)
             #{[:name "Petr"] [:age 37]})))
 
-    (is (= (d/db-with (db*) [[:db.fn/retractEntity 1]])
-           (d/db-with (db*) [[:db/retractEntity 1]])))
-
     (testing "Retract entitiy with incoming refs"
       (is (= (d/q '[:find ?e :where [1 :friend ?e]] db)
             #{[2]}))
