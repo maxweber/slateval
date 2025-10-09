@@ -962,13 +962,15 @@
     (java.sql.DriverManager/getConnection url)))
 
 (defn slice
-  [{:keys [db ^bytes begin ^bytes end]}]
+  [{:keys [db ^bytes begin ^bytes end reverse]}]
   (reify java.lang.Iterable
     (iterator [_]
       (let [^java.sql.Connection conn (get-sqlite-connection db)
             ^java.sql.PreparedStatement stmt
             (.prepareStatement conn
-                               "select k from dbval where k >= ? and k < ?"
+                               (str "select k from dbval where k >= ? and k < ?"
+                                    (when reverse
+                                      " order by k desc"))
                                java.sql.ResultSet/TYPE_FORWARD_ONLY
                                java.sql.ResultSet/CONCUR_READ_ONLY)
             _ (.setBytes stmt 1 begin)
@@ -1159,11 +1161,10 @@
                        (<= (:tx datom)
                            (:max-tx db))))
              datoms-filter)
-       (.subSet (.descendingSet tuples)
-                end
-                true
-                begin
-                true))))
+       (slice {:db db
+               :begin begin
+               :end end
+               :reverse true}))))
 
   (-index-range [db attr start end]
     (validate-indexed db :avet attr nil nil nil)
