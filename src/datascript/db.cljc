@@ -1184,11 +1184,9 @@
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
              datoms-filter)
-       (.subSet tuples
-                begin
-                true
-                end
-                true))))
+       (slice {:db db
+               :begin begin
+               :end end}))))
                 
   clojure.data/EqualityPartition
   (equality-partition [x] :datascript/db)
