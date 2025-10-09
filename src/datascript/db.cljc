@@ -1029,19 +1029,7 @@
       :clj
       [Object               (hashCode [db]      (hash-db db))
        clojure.lang.IHashEq (hasheq [db]        (hash-db db))
-       clojure.lang.IPersistentCollection
-       (count [db]         (count (filter
-                                   (fn [tuple]
-                                     (= (first tuple)
-                                        "eavt"))
-                                   tuples)))
-       (equiv [db other]   (equiv-db db other))
-       clojure.lang.IEditableCollection 
-       (empty [db]         (-> (restore-db
-                                 {:schema  (.-schema db)
-                                  :rschema (.-rschema db)
-                                  :tuples    (empty (.-tuples db))})
-                             (with-meta (meta db))))
+       clojure.lang.IEditableCollection
        (asTransient [db] (db-transient db))
        clojure.lang.ITransientCollection
        (conj [db key] (throw (ex-info "datascript.DB/conj! is not supported" {})))
