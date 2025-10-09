@@ -530,10 +530,6 @@
                        [:db/add 296 :friend -1]])"
   conn/transact!)
 
-(def ^{:arglists '([conn db] [conn db tx-meta])} reset-conn!
-  "Forces underlying `conn` value to become `db`. Will generate a tx-report that will remove everything from old value and insert everything from the new one."
-  conn/reset-conn!)
-
 (def ^{:arglists '([conn schema])} reset-schema!
   conn/reset-schema!)
 

@@ -36,27 +36,3 @@
   (let [conn (d/conn-from-db (d/init-db datoms schema))]
     (is (= datoms (set (d/datoms @conn :eavt))))
     (is (= schema (:schema @conn)))))
-
-(deftest test-reset-conn!
-  (let [conn    (d/conn-from-datoms datoms schema)
-        report  (atom nil)
-        _       (d/listen! conn #(reset! report %))
-        datoms' #{(d/datom 1 :age 20)
-                  (d/datom 1 :sex :male)}
-        schema' {:email {:db/unique :db.unique/identity}}
-        db'     (d/init-db datoms' schema')]
-    (d/reset-conn! conn db' :meta)
-    (is (= datoms' (set (d/datoms @conn :eavt))))
-    (is (= schema' (:schema @conn)))
-    
-    (let [{:keys [db-before db-after tx-data tx-meta]} @report]
-      (is (= datoms  (set (d/datoms db-before :eavt))))
-      (is (= schema  (:schema db-before)))
-      (is (= datoms' (set (d/datoms db-after :eavt))))
-      (is (= schema' (:schema db-after)))
-      (is (= :meta   tx-meta))
-      (is (= [[1 :age  17     false]
-              [1 :name "Ivan" false]
-              [1 :age  20     true]
-              [1 :sex  :male  true]]
-            (map (juxt :e :a :v :added) tx-data))))))

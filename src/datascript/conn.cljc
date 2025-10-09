@@ -100,33 +100,6 @@
          (callback report))
        report))))
 
-(defn reset-conn!
-  ([conn db]
-   (reset-conn! conn db nil))
-  ([conn db tx-meta]
-   {:pre [(conn? conn)
-          (db/db? db)]}
-   (let [db-before @conn
-         report    (db/map->TxReport
-                     {:db-before db-before
-                      :db-after  db
-                      :tx-data   (concat
-                                   (when db-before
-                                     (map #(assoc % :added false) (db/-datoms db-before :eavt nil nil nil nil)))
-                                   (db/-datoms db :eavt nil nil nil nil))
-                      :tx-meta   tx-meta})]
-     (if-some [storage (storage/storage db-before)]
-       (do
-         (storage/store db)
-         (swap! (:atom conn) assoc
-           :db db
-           :tx-tail []
-           :db-last-stored db))
-       (reset! conn db))
-     (doseq [[_ callback] (:listeners @(:atom conn))]
-       (callback report))
-     db)))
-
 (defn reset-schema! [conn schema]
   {:pre [(conn? conn)]}
   (let [db (swap! conn db/with-schema schema)]
