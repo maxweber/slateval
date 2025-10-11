@@ -1888,7 +1888,7 @@
   [db tuple]
   (try
     (with-open [conn ^java.sql.Connection (get-sqlite-connection db)
-                stmt (.prepareStatement conn "INSERT INTO dbval (k) VALUES (?)")]
+                stmt (.prepareStatement conn "INSERT OR IGNORE INTO dbval (k) VALUES (?)")]
       (.setBytes ^java.sql.PreparedStatement stmt
                  1
                  (pack tuple))
