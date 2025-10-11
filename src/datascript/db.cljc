@@ -693,7 +693,9 @@
 (defn serialize-tuple
   [x]
   (cond
-    (keyword? x)
+    (or (keyword? x)
+        (symbol? x)
+        (string? x))
     (pr-str x)
 
     (sequential? x)
@@ -706,11 +708,11 @@
 (defn serialize-value
   [db attr v]
   (cond
-    (map? v)
-    (nippy/freeze v)
-
-    (keyword? v)
-    (nippy/freeze v)
+    (or (map? v)
+        (keyword? v)
+        (symbol? v)
+        (string? v))
+    (pr-str v)
 
     (sequential? v)
     (serialize-tuple v)
@@ -761,13 +763,29 @@
                 :eavt
                 datom)))
 
+(defn deserialize-tuple
+  [x]
+  (cond
+    (string? x)
+    (edn/read-string x)
+
+    (instance? java.util.List
+               x)
+    (into []
+          (map deserialize-tuple)
+          x)
+    :else
+    x))
+
 (defn deserialize-value
   [db attr v]
-  (if (bytes? v)
-    (nippy/thaw v)
+  (if (string? v)
+    (edn/read-string v)
     (if (tuple? db attr)
-      (edn/read-string v)
-      v)))
+      (deserialize-tuple v)
+      (if (get-in db [:schema attr :db/tupleAttrs])
+        (deserialize-tuple v)
+        v))))
 
 (defn datom-from-tuple
   "Reads back a datom that was stored as `com.apple.foundationdb.tuple.Tuple`."
@@ -776,13 +794,17 @@
     (let [[order c0 c1 c2 c3 c4] (vec tuple)]
       (case order
         "eavt"
-        (datom c0 (edn/read-string c1) (deserialize-value db c1 c2) c3 c4)
+        (let [attr (edn/read-string c1)]
+          (datom c0 attr (deserialize-value db attr c2) c3 c4))
         "aevt"
-        (datom c1 (edn/read-string c0) (deserialize-value db c0 c2) c3 c4)
+        (let [attr (edn/read-string c0)]
+          (datom c1 attr (deserialize-value db attr c2) c3 c4))
         "avet"
-        (datom c2 (edn/read-string c0) (deserialize-value db c0 c1) c3 c4)
+        (let [attr (edn/read-string c0)]
+          (datom c2 attr (deserialize-value db attr c1) c3 c4))
         "teav"
-        (datom c1 (edn/read-string c2) (deserialize-value db c2 c3) c0 c4)))
+        (let [attr (edn/read-string c2)]
+          (datom c1 attr (deserialize-value db attr c3) c0 c4))))
     (catch Exception e
       (throw (ex-info "datom-from-tuple failed"
                       {:tuple tuple}
