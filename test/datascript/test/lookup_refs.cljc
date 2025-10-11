@@ -133,13 +133,14 @@
       {:db/id 1 :name "Ivan" :friends #{{:db/id 2}}})))
 
 (deftest lookup-refs-index-access
-  (let [db (d/db-with (d/empty-db {:name    {:db/unique :db.unique/identity}
-                                   :friends {:db/valueType :db.type/ref
-                                             :db/cardinality :db.cardinality/many}})
-             [{:db/id 1 :name "Ivan" :friends [2 3]}
-              {:db/id 2 :name "Petr" :friends 3}
-              {:db/id 3 :name "Oleg"}])]
-    (are [index attrs datoms] (= (map (juxt :e :a :v) (apply d/datoms db index attrs)) datoms)
+  (let [db* (fn []
+              (d/db-with (d/empty-db {:name    {:db/unique :db.unique/identity}
+                                      :friends {:db/valueType :db.type/ref
+                                                :db/cardinality :db.cardinality/many}})
+                         [{:db/id 1 :name "Ivan" :friends [2 3]}
+                          {:db/id 2 :name "Petr" :friends 3}
+                          {:db/id 3 :name "Oleg"}]))]
+    (are [index attrs datoms] (= (map (juxt :e :a :v) (apply d/datoms (db*) index attrs)) datoms)
       :eavt [[:name "Ivan"]]
       [[1 :friends 2] [1 :friends 3] [1 :name "Ivan"]]
        
@@ -161,8 +162,8 @@
       :avet [:friends [:name "Oleg"] [:name "Ivan"]]
       [[1 :friends 3]])
     
-    (are [index attrs resolved-attrs] (= (vec (apply d/seek-datoms db index attrs))
-                                        (vec (apply d/seek-datoms db index resolved-attrs)))
+    (are [index attrs resolved-attrs] (= (vec (apply d/seek-datoms (db*) index attrs))
+                                         (vec (apply d/seek-datoms (db*) index resolved-attrs)))
       :eavt [[:name "Ivan"]] [1]
       :eavt [[:name "Ivan"] :name] [1 :name]
       :eavt [[:name "Ivan"] :friends [:name "Oleg"]] [1 :friends 3]
@@ -173,7 +174,7 @@
       :avet [:friends [:name "Oleg"]] [:friends 3]
       :avet [:friends [:name "Oleg"] [:name "Petr"]] [:friends 3 2])
     
-    (are [attr start end datoms] (= (map (juxt :e :a :v) (d/index-range db attr start end)) datoms)
+    (are [attr start end datoms] (= (map (juxt :e :a :v) (d/index-range (db*) attr start end)) datoms)
       :friends [:name "Oleg"] [:name "Oleg"]
       [[1 :friends 3] [2 :friends 3]]
        
