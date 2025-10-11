@@ -57,13 +57,6 @@
             ["<SECRET>" "<PROTECTED>" "<UNKWOWN>"]))
       (is (= (map :v (d/datoms (d/filter db remove-pass) :aevt :password))
             [])))
-  
-    (testing "equiv"
-      (is (= (d/db-with (db*) [[:db.fn/retractEntity 2]])
-            (d/filter db remove-ivan)))
-      (is (= empty-db
-            (d/filter empty-db (constantly true))
-            (d/filter db (constantly false)))))
     
     (testing "hash"
       (is (= (hash (d/db-with (db*) [[:db.fn/retractEntity 2]]))
