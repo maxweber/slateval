@@ -102,7 +102,7 @@
         db (d/db-with (d/empty-db schema)
              [{:db/id 1 :name "Ivan" :aka ["IV" "Terrible"]}
               {:db/id 2 :name "Petr" :age 37 :huh? false}])]
-    (is (= #{:schema :tuples :max-eid :max-tx :rschema :pull-patterns :pull-attrs :hash :db-file}
+    (is (= #{:schema :tuples :max-eid :max-tx :rschema :pull-patterns :pull-attrs :hash :db-file :conn}
           (set (keys db))))
     (is (map? db))
     (is (seqable? (:eavt db)))

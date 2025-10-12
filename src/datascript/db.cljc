@@ -988,7 +988,7 @@
   [{:keys [db ^bytes begin ^bytes end reverse]}]
   (reify java.lang.Iterable
     (iterator [_]
-      (let [^java.sql.Connection conn (get-sqlite-connection db)
+      (let [^java.sql.Connection conn (:conn db)
             ^java.sql.PreparedStatement stmt
             (.prepareStatement conn
                                (str "select k from dbval where k >= ? and k < ?"
@@ -1009,7 +1009,7 @@
                          (reset! closed true)
                          (try (.close rs)   (catch Throwable _))
                          (try (.close stmt) (catch Throwable _))
-                         (try (.close conn) (catch Throwable _))))
+                         ))
             advance! (fn []
                        (when-not @closed
                          (if (.next rs)
@@ -1440,13 +1440,15 @@
   (let [db-file (or (:db-file opts)
                     (.getCanonicalPath
                      (java.io.File/createTempFile (str (random-uuid))
-                                                  ".db")))]
-    (with-open [conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})]
-      (create-table! conn))
+                                                  ".db")))
+        ;; TODO: consider how to close the connection:
+        conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})]
+    (create-table! conn)
     (map->DB
      {:schema        schema
       :rschema       (rschema (merge implicit-schema schema))
       :db-file       db-file
+      :conn          conn
       :tuples        (java.util.TreeSet.
                       ^java.util.Comparator byte-array-comparator)
       :max-eid       e0
@@ -1910,12 +1912,12 @@
 (defn set-add!
   [db tuple]
   (try
-    (with-open [conn ^java.sql.Connection (get-sqlite-connection db)
-                stmt (.prepareStatement conn "INSERT OR IGNORE INTO dbval (k) VALUES (?)")]
-      (.setBytes ^java.sql.PreparedStatement stmt
-                 1
-                 (pack tuple))
-      (.executeUpdate ^java.sql.PreparedStatement stmt))
+    (let [conn ^java.sql.Connection (:conn db)]
+      (with-open [stmt (.prepareStatement conn "INSERT OR IGNORE INTO dbval (k) VALUES (?)")]
+        (.setBytes ^java.sql.PreparedStatement stmt
+                   1
+                   (pack tuple))
+        (.executeUpdate ^java.sql.PreparedStatement stmt)))
     (catch Exception e
       (throw (ex-info "set-add! failed"
                       {:tuple tuple}
