@@ -2203,7 +2203,10 @@
 
 (defn+ transact-tx-data-impl [initial-report initial-es]
   (let [initial-report' (-> initial-report
-                          #_(update :db-after transient))
+                            ;; the logic should be able to see intermediate
+                            ;; steps of the current transaction:
+                            (update :db-after update :max-tx inc)
+                            #_(update :db-after transient))
         has-tuples?     (not (empty? (-attrs-by (:db-after initial-report) :db.type/tuple)))
         initial-es'     (if has-tuples?
                           (interleave initial-es (repeat ::flush-tuples))
@@ -2219,7 +2222,6 @@
           (dissoc ::reverse-tempids)
           (update :tempids #(util/removem auto-tempid? %))
           (update :tempids assoc :db/current-tx (current-tx report))
-          (update :db-after update :max-tx inc)
           #_(update :db-after persistent!))
 
         :let [[entity & entities] es]
