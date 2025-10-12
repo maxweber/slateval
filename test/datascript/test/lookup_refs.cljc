@@ -26,11 +26,12 @@
       [:age 10]   "Lookup ref attribute should be marked as :db/unique: [:age 10]")))
 
 (deftest test-lookup-refs-transact
-  (let [db (d/db-with (d/empty-db {:name    {:db/unique :db.unique/identity}
-                                   :friend  {:db/valueType :db.type/ref}})
-             [{:db/id 1 :name "Ivan"}
-              {:db/id 2 :name "Petr"}])]
-    (are [tx res] (= res (tdc/entity-map (d/db-with db tx) 1))
+  (let [db* (fn []
+              (d/db-with (d/empty-db {:name    {:db/unique :db.unique/identity}
+                                      :friend  {:db/valueType :db.type/ref}})
+                         [{:db/id 1 :name "Ivan"}
+                          {:db/id 2 :name "Petr"}]))]
+    (are [tx res] (= res (tdc/entity-map (d/db-with (db*) tx) 1))
       ;; Additions
       [[:db/add [:name "Ivan"] :age 35]]
       {:db/id 1 :name "Ivan" :age 35}
@@ -83,7 +84,7 @@
       [[:db.fn/retractEntity [:name "Ivan"]]]
       nil)
     
-    (are [tx msg] (thrown-msg? msg (d/db-with db tx))
+    (are [tx msg] (thrown-msg? msg (d/db-with (db*) tx))
       [{:db/id [:name "Oleg"], :age 10}]
       "Nothing found for entity id [:name \"Oleg\"]"
          
@@ -91,14 +92,15 @@
       "Nothing found for entity id [:name \"Oleg\"]")))
 
 (deftest test-lookup-refs-transact-multi
-  (let [db (d/db-with (d/empty-db {:name    {:db/unique :db.unique/identity}
-                                   :friends {:db/valueType :db.type/ref
-                                             :db/cardinality :db.cardinality/many}})
-             [{:db/id 1 :name "Ivan"}
-              {:db/id 2 :name "Petr"}
-              {:db/id 3 :name "Oleg"}
-              {:db/id 4 :name "Sergey"}])]
-    (are [tx res] (= (tdc/entity-map (d/db-with db tx) 1) res)
+  (let [db* (fn []
+              (d/db-with (d/empty-db {:name    {:db/unique :db.unique/identity}
+                                      :friends {:db/valueType :db.type/ref
+                                                :db/cardinality :db.cardinality/many}})
+                         [{:db/id 1 :name "Ivan"}
+                          {:db/id 2 :name "Petr"}
+                          {:db/id 3 :name "Oleg"}
+                          {:db/id 4 :name "Sergey"}]))]
+    (are [tx res] (= (tdc/entity-map (d/db-with (db*) tx) 1) res)
       ;; Additions
       [[:db/add 1 :friends [:name "Petr"]]]
       {:db/id 1 :name "Ivan" :friends #{{:db/id 2}}}
