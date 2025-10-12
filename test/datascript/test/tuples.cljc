@@ -326,17 +326,17 @@
     (is (= 3 (:db/id (d/entity db [:ref+name [[:name "Ivan"] "Petr"]]))))))
 
 (deftest test-validation
-  (let [db  (d/empty-db {:a+b {:db/tupleAttrs [:a :b]}})
-        db1 (d/db-with db [[:db/add 1 :a "a"]])]
+  (let [db*  (fn [] (d/empty-db {:a+b {:db/tupleAttrs [:a :b]}}))
+        db1* (fn [] (d/db-with (db*) [[:db/add 1 :a "a"]]))]
     (is (thrown-msg? "Can’t modify tuple attrs directly: [:db/add 1 :a+b [nil nil]]"
-          (d/db-with db [[:db/add 1 :a+b [nil nil]]])))
+                     (d/db-with (db*) [[:db/add 1 :a+b [nil nil]]])))
     (is (thrown-msg? "Can’t modify tuple attrs directly: [:db/add 1 :a+b [\"a\" nil]]"
-          (d/db-with db1 [[:db/add 1 :a+b ["a" nil]]])))
+                     (d/db-with (db1*) [[:db/add 1 :a+b ["a" nil]]])))
     (is (thrown-msg? "Can’t modify tuple attrs directly: [:db/add 1 :a+b [\"a\" nil]]"
-          (d/db-with db [[:db/add 1 :a "a"]
-                         [:db/add 1 :a+b ["a" nil]]])))
+                     (d/db-with (db*) [[:db/add 1 :a "a"]
+                                       [:db/add 1 :a+b ["a" nil]]])))
     (is (thrown-msg? "Can’t modify tuple attrs directly: [:db/retract 1 :a+b [\"a\" nil]]"
-          (d/db-with db1 [[:db/retract 1 :a+b ["a" nil]]])))))
+                     (d/db-with (db1*) [[:db/retract 1 :a+b ["a" nil]]])))))
 
 (deftest test-indexes
   (let [db (-> (d/empty-db {:a+b+c {:db/tupleAttrs [:a :b :c]}})
