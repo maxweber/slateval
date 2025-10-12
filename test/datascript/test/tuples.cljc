@@ -301,29 +301,30 @@
                 :ref+name {:db/valueType :db.type/tuple
                            :db/tupleAttrs [:ref :name]
                            :db/unique :db.unique/identity}}
-        db     (-> (d/empty-db schema)
-                 (d/db-with
-                   [{:db/id -1 :name "Ivan"}
-                    {:db/id -2 :name "Oleg"}
-                    {:db/id -3 :name "Petr" :ref -1}
-                    {:db/id -4 :name "Yuri" :ref -2}]))]
-    (let [db' (d/db-with db [{:ref+name [1 "Petr"], :age 32}])]
+        db*     (fn []
+                 (-> (d/empty-db schema)
+                     (d/db-with
+                      [{:db/id -1 :name "Ivan"}
+                       {:db/id -2 :name "Oleg"}
+                       {:db/id -3 :name "Petr" :ref -1}
+                       {:db/id -4 :name "Yuri" :ref -2}])))]
+    (let [db' (d/db-with (db*) [{:ref+name [1 "Petr"], :age 32}])]
       (is (= {:age 32} (d/pull db' [:age] 3))))
     
-    (let [db' (d/db-with db [{:ref+name [[:name "Ivan"] "Petr"], :age 32}])]
+    (let [db' (d/db-with (db*) [{:ref+name [[:name "Ivan"] "Petr"], :age 32}])]
       (is (= {:age 32} (d/pull db' [:age] 3))))
     
-    (let [db' (d/db-with db [[:db/add -1 :ref+name [1 "Petr"]]
+    (let [db' (d/db-with (db*) [[:db/add -1 :ref+name [1 "Petr"]]
                              [:db/add -1 :age 32]])]
       (is (= {:age 32} (d/pull db' [:age] 3))))
     
-    (let [db' (d/db-with db [[:db/add -1 :ref+name [[:name "Ivan"] "Petr"]]
+    (let [db' (d/db-with (db*) [[:db/add -1 :ref+name [[:name "Ivan"] "Petr"]]
                              [:db/add -1 :age 32]])]
       (is (= {:age 32} (d/pull db' [:age] 3))))
     
-    (is (= 1 (:db/id (d/entity db [:name "Ivan"]))))
-    (is (= 3 (:db/id (d/entity db [:ref+name [1 "Petr"]]))))
-    (is (= 3 (:db/id (d/entity db [:ref+name [[:name "Ivan"] "Petr"]]))))))
+    (is (= 1 (:db/id (d/entity (db*) [:name "Ivan"]))))
+    (is (= 3 (:db/id (d/entity (db*) [:ref+name [1 "Petr"]]))))
+    (is (= 3 (:db/id (d/entity (db*) [:ref+name [[:name "Ivan"] "Petr"]]))))))
 
 (deftest test-validation
   (let [db*  (fn [] (d/empty-db {:a+b {:db/tupleAttrs [:a :b]}}))
