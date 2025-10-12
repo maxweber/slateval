@@ -4,6 +4,7 @@
     [clojure.walk]
     [clojure.data]
     [clojure.edn :as edn]
+    [clojure.string :as str]
     #?(:clj [datascript.inline :refer [update]])
     [datascript.lru :as lru]
     [datascript.util :as util]
