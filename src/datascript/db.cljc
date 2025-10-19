@@ -1914,12 +1914,12 @@
 (defn set-add!
   [db tuple]
   (try
-    (let [conn ^java.sql.Connection (:conn db)]
-      (with-open [stmt (.prepareStatement conn "INSERT OR IGNORE INTO dbval (k) VALUES (?)")]
-        (.setBytes ^java.sql.PreparedStatement stmt
-                   1
-                   (pack tuple))
-        (.executeUpdate ^java.sql.PreparedStatement stmt)))
+    (let [conn ^java.sql.Connection (:conn db)
+          stmt ^java.sql.PreparedStatement (:insert-stmt db)]
+      (.setBytes stmt
+                 1
+                 (pack tuple))
+      (.executeUpdate stmt))
     (catch Exception e
       (throw (ex-info "set-add! failed"
                       {:tuple tuple}
@@ -2210,6 +2210,15 @@
                             ;; the logic should be able to see intermediate
                             ;; steps of the current transaction:
                             (update :db-after update :max-tx inc)
+                            (update :db-after
+                                    (fn [db-after]
+                                      (assoc db-after
+                                             :insert-stmt
+                                             (.prepareStatement
+                                              ^java.sql.Connection
+                                              (:conn db-after)
+                                              "INSERT OR IGNORE INTO dbval (k) VALUES (?)")))
+                                   )
                             #_(update :db-after transient))
         has-tuples?     (not (empty? (-attrs-by (:db-after initial-report) :db.type/tuple)))
         initial-es'     (if has-tuples?
