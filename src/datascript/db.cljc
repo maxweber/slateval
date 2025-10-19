@@ -981,8 +981,10 @@
   [{:keys [db-file opts]}]
   ;; explicitly load the driver class
   (java.lang.Class/forName "org.sqlite.JDBC")
-  (let [^String url (sqlite-jdbc-url db-file opts)]
-    (java.sql.DriverManager/getConnection url)))
+  (let [^String url (sqlite-jdbc-url db-file opts)
+        conn (java.sql.DriverManager/getConnection url)]
+    (.setAutoCommit conn false)
+    conn))
 
 (defn slice
   [{:keys [db ^bytes begin ^bytes end reverse]}]
