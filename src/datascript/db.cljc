@@ -2454,6 +2454,28 @@
         (util/raise "Bad entity type at " entity ", expected map or vector"
           {:error :transact/syntax, :tx-data entity})))))
 
+(defmacro with-transaction
+  "Run BODY within a JDBC transaction on CONN.
+   - If CONN is already in a transaction (autocommit=false), just join it.
+   - If autocommit=true, disable it, start a transaction, and commit/rollback at the end."
+  [^java.sql.Connection conn & body]
+  `(let [was-auto?# (.getAutoCommit ~conn)]
+     (if-not was-auto?#
+       ;; Already inside a transaction — just run the body
+       (do ~@body)
+       ;; Start and manage a new transaction
+       (do
+         (.setAutoCommit ~conn false)
+         (try
+           (let [res# (do ~@body)]
+             (.commit ~conn)
+             res#)
+           (catch Throwable t#
+             (try (.rollback ~conn) (catch Throwable _#))
+             (throw t#))
+           (finally
+             (.setAutoCommit ~conn true)))))))
+
 (defn transact-tx-data [report es]
   (when-not (or
               (nil? es)
@@ -2461,4 +2483,5 @@
     (util/raise "Bad transaction data " es ", expected sequential collection"
       {:error :transact/syntax, :tx-data es}))
   (let [es' (assoc-auto-tempids (:db-before report) es)]
-    (transact-tx-data-impl report es')))
+    (with-transaction ^java.sql.Connection (:conn (:db-after report))
+      (transact-tx-data-impl report es'))))
