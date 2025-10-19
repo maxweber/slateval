@@ -1924,7 +1924,7 @@
       (.setBytes stmt
                  1
                  (pack tuple))
-      (.executeUpdate stmt))
+      (.addBatch stmt))
     (catch Exception e
       (throw (ex-info "set-add! failed"
                       {:tuple tuple}
@@ -1948,24 +1948,27 @@
 
 (defn with-datom [db ^Datom datom]
   (validate-datom db datom)
-  (let [indexing? (indexing? db (.-a datom))]
-    (if (datom-added datom)
-      (cond-> db
-        true      (set-add! (datom-tuple db :eavt datom))
-        true      (set-add! (datom-tuple db :aevt datom))
-        indexing? (set-add! (datom-tuple db :avet datom))
-        true      (set-add! (datom-tuple db :teav datom))
-        true      (advance-max-eid (.-e datom))
-        true      (assoc :hash (atom 0)))
-      (if-some [removing (some-> (fsearch db [(.-e datom) (.-a datom) (.-v datom)])
-                                 (retract-datom (:tx datom)))]
-        (cond-> db
-          true      (set-add! (datom-tuple db :eavt removing))
-          true      (set-add! (datom-tuple db :aevt removing))
-          indexing? (set-add! (datom-tuple db :avet removing))
-          true      (set-add! (datom-tuple db :teav removing))
-          true      (assoc :hash (atom 0)))
-        db))))
+  (let [indexing? (indexing? db (.-a datom))
+        db (if (datom-added datom)
+             (cond-> db
+               true      (set-add! (datom-tuple db :eavt datom))
+               true      (set-add! (datom-tuple db :aevt datom))
+               indexing? (set-add! (datom-tuple db :avet datom))
+               true      (set-add! (datom-tuple db :teav datom))
+               true      (advance-max-eid (.-e datom))
+               true      (assoc :hash (atom 0)))
+             (if-some [removing (some-> (fsearch db [(.-e datom) (.-a datom) (.-v datom)])
+                                        (retract-datom (:tx datom)))]
+               (cond-> db
+                 true      (set-add! (datom-tuple db :eavt removing))
+                 true      (set-add! (datom-tuple db :aevt removing))
+                 indexing? (set-add! (datom-tuple db :avet removing))
+                 true      (set-add! (datom-tuple db :teav removing))
+                 true      (assoc :hash (atom 0)))
+               db))]
+    (.executeBatch ^java.sql.PreparedStatement (:insert-stmt db))
+    db
+    ))
 
 (defn- queue-tuple [queue tuple idx db e a v]
   (let [tuple-value  (or (get queue tuple)
