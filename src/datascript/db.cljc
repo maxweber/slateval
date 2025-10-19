@@ -1444,13 +1444,18 @@
                      (java.io.File/createTempFile (str (random-uuid))
                                                   ".db")))
         ;; TODO: consider how to close the connection:
-        conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})]
-    (create-table! conn)
+        conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})
+        _ (create-table! conn)
+        insert-stmt (.prepareStatement
+                     ^java.sql.Connection
+                     conn
+                     "INSERT OR IGNORE INTO dbval (k) VALUES (?)")]
     (map->DB
      {:schema        schema
       :rschema       (rschema (merge implicit-schema schema))
       :db-file       db-file
       :conn          conn
+      :insert-stmt   insert-stmt
       :tuples        (java.util.TreeSet.
                       ^java.util.Comparator byte-array-comparator)
       :max-eid       e0
@@ -2210,15 +2215,6 @@
                             ;; the logic should be able to see intermediate
                             ;; steps of the current transaction:
                             (update :db-after update :max-tx inc)
-                            (update :db-after
-                                    (fn [db-after]
-                                      (assoc db-after
-                                             :insert-stmt
-                                             (.prepareStatement
-                                              ^java.sql.Connection
-                                              (:conn db-after)
-                                              "INSERT OR IGNORE INTO dbval (k) VALUES (?)")))
-                                   )
                             #_(update :db-after transient))
         has-tuples?     (not (empty? (-attrs-by (:db-after initial-report) :db.type/tuple)))
         initial-es'     (if has-tuples?
