@@ -1,9 +1,8 @@
 (ns datascript.conn
   (:require
     [datascript.db :as db #?@(:cljs [:refer [DB FilteredDB]])]
-    [datascript.storage :as storage]
     [extend-clj.core :as extend]
-    [me.tonsky.persistent-sorted-set :as set])
+    )
   #?(:clj
      (:import
        [datascript.db DB FilteredDB])))
@@ -58,7 +57,7 @@
   ([datoms schema]
    (conn-from-db (db/init-db datoms schema {})))
   ([datoms schema opts]
-   (conn-from-db (db/init-db datoms schema (storage/maybe-adapt-storage opts)))))
+   (conn-from-db (db/init-db datoms schema opts))))
 
 (defn create-conn
   ([]
@@ -66,18 +65,7 @@
   ([schema]
    (conn-from-db (db/empty-db schema {})))
   ([schema opts]
-   (conn-from-db (db/empty-db schema (storage/maybe-adapt-storage opts)))))
-
-#?(:clj
-   (defn restore-conn
-     ([storage]
-      (restore-conn storage {}))
-     ([storage opts]
-      (when-some [[db tail] (storage/restore-impl storage opts)]
-        (make-conn
-          {:db (storage/db-with-tail db tail)
-           :tx-tail tail
-           :db-last-stored db})))))
+   (conn-from-db (db/empty-db schema opts))))
 
 (defn ^:no-doc -transact! [conn tx-data tx-meta]
   {:pre [(conn? conn)]}
@@ -103,12 +91,6 @@
 (defn reset-schema! [conn schema]
   {:pre [(conn? conn)]}
   (let [db (swap! conn db/with-schema schema)]
-    #?(:clj
-       (when-some [storage (storage/storage @conn)]
-         (storage/store-impl! db (storage/storage-adapter db) true)
-         (swap! (:atom conn) assoc
-           :tx-tail []
-           :db-last-stored db)))
     db))
 
 (defn listen!

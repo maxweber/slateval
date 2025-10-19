@@ -6,7 +6,6 @@
     [datascript.db :as db #?@(:cljs [:refer [Datom DB FilteredDB]])]
     #?(:clj [datascript.pprint])
     [datascript.pull-api :as dp]
-    [datascript.storage :as storage]
     [datascript.query :as dq]
     [datascript.impl.entity :as de]
     [datascript.util :as util]
@@ -172,7 +171,7 @@
   ([schema]
    (db/empty-db schema {}))
   ([schema opts]
-   (db/empty-db schema (storage/maybe-adapt-storage opts))))
+   (db/empty-db schema opts)))
 
 (def ^{:arglists '([x])
        :doc "Returns `true` if the given value is an immutable database, `false` otherwise."}
@@ -201,7 +200,7 @@
   ([datoms schema]
    (db/init-db datoms schema {}))
   ([datoms schema opts]
-   (db/init-db datoms schema (storage/maybe-adapt-storage opts))))
+   (db/init-db datoms schema opts)))
 
 ; Schema
 
@@ -437,12 +436,6 @@
    If you specify `:storage` option, conn will be stored automatically after each transaction"
   conn/create-conn)
 
-#?(:clj
-   (def ^{:arglists '([storage] [storage opts])} restore-conn
-     "Lazy-load database from storage and make conn out of it.
-      Returns nil if there’s no database yet in storage"
-     conn/restore-conn))
-
 (def ^{:arglists '([conn tx-data] [conn tx-data tx-meta])} transact!
   "Applies transaction the underlying database value and atomically updates connection reference to point to the result of that transaction, new db value.
   
@@ -654,57 +647,6 @@
 (def ^{:arglists '([uuid])} squuid-time-millis
   "Returns time that was used in [[squuid]] call, in milliseconds, rounded to the closest second."
   util/squuid-time-millis)
-
-
-;; Storage
-#?(:clj
-   (def ^{:arglists '([db])} storage
-     "Returns IStorage used by DB instance"
-     storage/storage))
-
-#?(:clj
-   (def ^{:arglists '([db] [db storage])} store
-     "Stores databases to provided storage. If database was created
-      with :storage option or restored from storage, use single-argument version.
-      
-      Subsequent stores are incremental, i.e. only newly added nodes will be actually stored.
-      
-      Storing already stored dbs into another storage is not supported (may change)."
-     storage/store))
-
-#?(:clj 
-   (def ^{:arglists '([storage] [storage opts])} restore
-     "Lazy-loads database from storage. Ultra-fast, fetches the rest as it’s needed"
-     storage/restore))
-
-#?(:clj
-   (defn addresses
-     "Returns all addresses in use by current db (as java.util.HashSet).
-      Anything that is not in the return set is safe to be deleted"
-     [& dbs]
-     (storage/addresses dbs)))
-
-#?(:clj
-   (def ^{:arglists '([storage])} collect-garbage
-     "Deletes all keys from storage that are not referenced by any of the currently alive db refs.
-      Has a side-effect of fully loading databases fully into memory, so, can be slow"
-     storage/collect-garbage))
-
-#?(:clj
-   (def ^{:arglists '([dir] [dir opts])} file-storage
-     "Default implementation that stores data in files in a dir.
-   
-   Options are:
-   
-   :freeze-fn :: (data)   -> String. A serialization function
-   :thaw-fn   :: (String) -> data. A deserialization function
-   :write-fn  :: (OutputStream data) -> void. Implement your own writer to FileOutputStream
-   :read-fn   :: (InputStream) -> Object. Implement your own reader from FileInputStream
-   :addr->filename-fn :: (UUID) -> String. Construct file name from address
-   :filename->addr-fn :: (String) -> UUID. Reconstruct address from file name
-   
-   All options are optional."
-     storage/file-storage))
 
 (defn settings [db]
   (set/settings (:eavt db)))
