@@ -1035,7 +1035,8 @@
           (remove [_]
             (throw (UnsupportedOperationException. "remove not supported"))))))))
 
-(defrecord-updatable DB [schema tuples max-eid max-tx rschema pull-patterns pull-attrs hash]
+(defrecord-updatable DB [schema tuples max-eid max-tx rschema pull-patterns pull-attrs hash
+                         #?@(:clj [db-file conn])]
   #?@(:cljs
       [IHash                (-hash  [db]        (hash-db db))
        IEquiv               (-equiv [db other]  (equiv-db db other))
@@ -1445,17 +1446,12 @@
                                                   ".db")))
         ;; TODO: consider how to close the connection:
         conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})
-        _ (create-table! conn)
-        insert-stmt (.prepareStatement
-                     ^java.sql.Connection
-                     conn
-                     "INSERT OR IGNORE INTO dbval (k) VALUES (?)")]
+        _ (create-table! conn)]
     (map->DB
      {:schema        schema
       :rschema       (rschema (merge implicit-schema schema))
       :db-file       db-file
       :conn          conn
-      :insert-stmt   insert-stmt
       :tuples        (java.util.TreeSet.
                       ^java.util.Comparator byte-array-comparator)
       :max-eid       e0
@@ -1917,14 +1913,12 @@
          false))
 
 (defn set-add!
-  [db tuple]
+  [db stmt tuple]
   (try
-    (let [conn ^java.sql.Connection (:conn db)
-          stmt ^java.sql.PreparedStatement (:insert-stmt db)]
-      (.setBytes stmt
-                 1
-                 (pack tuple))
-      (.addBatch stmt))
+    (.setBytes ^java.sql.PreparedStatement stmt
+               1
+               (pack tuple))
+    (.addBatch ^java.sql.PreparedStatement stmt)
     (catch Exception e
       (throw (ex-info "set-add! failed"
                       {:tuple tuple}
@@ -1948,27 +1942,31 @@
 
 (defn with-datom [db ^Datom datom]
   (validate-datom db datom)
-  (let [indexing? (indexing? db (.-a datom))
+  (let [conn ^java.sql.Connection (:conn db)
+        stmt ^java.sql.PreparedStatement (.prepareStatement
+                                           conn
+                                           "INSERT OR IGNORE INTO dbval (k) VALUES (?)")
+        indexing? (indexing? db (.-a datom))
         db (if (datom-added datom)
-             (cond-> db
-               true      (set-add! (datom-tuple db :eavt datom))
-               true      (set-add! (datom-tuple db :aevt datom))
-               indexing? (set-add! (datom-tuple db :avet datom))
-               true      (set-add! (datom-tuple db :teav datom))
-               true      (advance-max-eid (.-e datom))
-               true      (assoc :hash (atom 0)))
+             (-> db
+                 (set-add! stmt (datom-tuple db :eavt datom))
+                 (set-add! stmt (datom-tuple db :aevt datom))
+                 (cond-> indexing? (set-add! stmt (datom-tuple db :avet datom)))
+                 (set-add! stmt (datom-tuple db :teav datom))
+                 (advance-max-eid (.-e datom))
+                 (assoc :hash (atom 0)))
              (if-some [removing (some-> (fsearch db [(.-e datom) (.-a datom) (.-v datom)])
                                         (retract-datom (:tx datom)))]
-               (cond-> db
-                 true      (set-add! (datom-tuple db :eavt removing))
-                 true      (set-add! (datom-tuple db :aevt removing))
-                 indexing? (set-add! (datom-tuple db :avet removing))
-                 true      (set-add! (datom-tuple db :teav removing))
-                 true      (assoc :hash (atom 0)))
+               (-> db
+                   (set-add! stmt (datom-tuple db :eavt removing))
+                   (set-add! stmt (datom-tuple db :aevt removing))
+                   (cond-> indexing? (set-add! stmt (datom-tuple db :avet removing)))
+                   (set-add! stmt (datom-tuple db :teav removing))
+                   (assoc :hash (atom 0)))
                db))]
-    (.executeBatch ^java.sql.PreparedStatement (:insert-stmt db))
-    db
-    ))
+    (.executeBatch stmt)
+    (.close stmt)
+    db))
 
 (defn- queue-tuple [queue tuple idx db e a v]
   (let [tuple-value  (or (get queue tuple)
@@ -2481,6 +2479,9 @@
               (sequential? es))
     (util/raise "Bad transaction data " es ", expected sequential collection"
       {:error :transact/syntax, :tx-data es}))
-  (let [es' (assoc-auto-tempids (:db-before report) es)]
-    (with-transaction ^java.sql.Connection (:conn (:db-after report))
-      (transact-tx-data-impl report es'))))
+  (let [es' (assoc-auto-tempids (:db-before report) es)
+        conn ^java.sql.Connection (:conn (:db-after report))
+        result (with-transaction conn
+                 (transact-tx-data-impl report es'))]
+    (.commit conn)
+    result))
