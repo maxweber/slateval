@@ -1709,18 +1709,26 @@
         v))
     (-> db -schema (get a) :db/tupleAttrs) vs))
 
-(defn- tuple-component-values [db e tuple-attrs]
+(defn- tuple-component-values
+  "Returns the current component values for entity `e`.
+   Used when tuple attrs need to compare queued/DB state during guards and upserts."
+  [db e tuple-attrs]
   (mapv
     (fn [attr]
       (:v (first (-datoms db :eavt e attr nil nil))))
     tuple-attrs))
 
-(defn- tuple-existing-entity [db tuple tuple-value]
+(defn- tuple-existing-entity
+  "Looks up an entity that already owns `tuple` with the given component values."
+  [db tuple tuple-value]
   (when (is-attr? db tuple :db.unique/identity)
     (let [resolved (resolve-tuple-refs db tuple tuple-value)]
       (:e (first (-datoms db :avet tuple resolved nil nil))))))
 
-(defn- tuple-upsert-eid [db tempids temp-e a v]
+(defn- tuple-upsert-eid
+  "When temp entity `temp-e` sets tuple component attr `a`, try resolving its tuple target.
+   If all tuple components are known (queued or in DB), return the entity that should be upserted."
+  [db tempids temp-e a v]
   (when-let [tuples (get (-attrs-by db :db/attrTuples) a)]
     (some
       (fn [[tuple idx]]
@@ -2214,6 +2222,8 @@
 
 #?(:clj
    (defn- rollback-report!
+     "Rolls the JDBC connection back to the transaction start before a retry.
+      Ensures tuple writes and schema mutations are cleared prior to re-running."
      [report]
      (when-let [conn (some-> report :db-after :conn)]
        (try
@@ -2225,6 +2235,7 @@
                            t))))))
    :cljs
    (defn ^:private rollback-report!
+     "No-op placeholder for CLJS where transactions are in-memory."
      [report]
      report))
 
