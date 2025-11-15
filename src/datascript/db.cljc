@@ -1446,7 +1446,8 @@
                                                   ".db")))
         ;; TODO: consider how to close the connection:
         conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})
-        _ (create-table! conn)]
+        _ (create-table! conn)
+        _ (.commit conn)]
     (map->DB
      {:schema        schema
       :rschema       (rschema (merge implicit-schema schema))
@@ -1707,6 +1708,36 @@
         (entid-strict db v)
         v))
     (-> db -schema (get a) :db/tupleAttrs) vs))
+
+(defn- tuple-component-values [db e tuple-attrs]
+  (mapv
+    (fn [attr]
+      (:v (first (-datoms db :eavt e attr nil nil))))
+    tuple-attrs))
+
+(defn- tuple-existing-entity [db tuple tuple-value]
+  (when (is-attr? db tuple :db.unique/identity)
+    (let [resolved (resolve-tuple-refs db tuple tuple-value)]
+      (:e (first (-datoms db :avet tuple resolved nil nil))))))
+
+(defn- tuple-upsert-eid [db tempids temp-e a v]
+  (when-let [tuples (get (-attrs-by db :db/attrTuples) a)]
+    (some
+      (fn [[tuple idx]]
+        (when (is-attr? db tuple :db.unique/identity)
+          (let [tuple-attrs (get-in db [:schema tuple :db/tupleAttrs])
+                allocated   (get tempids temp-e)
+                components  (map-indexed
+                               (fn [i component]
+                                 (cond
+                                   (= i idx) v
+                                   allocated
+                                   (:v (first (-datoms db :eavt allocated component nil nil)))
+                                   :else nil))
+                               tuple-attrs)]
+            (when (every? some? components)
+              (tuple-existing-entity db tuple components)))))
+      tuples)))
 
 (defn+ ^number entid [db eid]
   {:pre [(db? db)]}
@@ -1969,10 +2000,21 @@
     db))
 
 (defn- queue-tuple [queue tuple idx db e a v]
-  (let [tuple-value  (or (get queue tuple)
-                       (:v (first (-datoms db :eavt e tuple nil nil)))
-                       (vec (repeat (-> db (-schema) (get tuple) :db/tupleAttrs count) nil)))
-        tuple-value' (assoc tuple-value idx v)]
+  (let [tuple-attrs    (-> db (-schema) (get tuple) :db/tupleAttrs)
+        empty-value    (vec (repeat (count tuple-attrs) nil))
+        db-value       (:v (first (-datoms db :eavt e tuple nil nil)))
+        components     (delay (tuple-component-values db e tuple-attrs))
+        with-fallback  (fn [value]
+                        (or value
+                          @components
+                          empty-value))
+        tuple-value    (if-let [queued (get queue tuple)]
+                         (let [fallback (with-fallback db-value)]
+                           (mapv (fn [queued-val fallback-val]
+                                   (if (nil? queued-val) fallback-val queued-val))
+                             queued fallback))
+                         (with-fallback db-value))
+        tuple-value'   (assoc tuple-value idx v)]
     (assoc queue tuple tuple-value')))
 
 (defn- queue-tuples [queue tuples db e a v]
@@ -2021,27 +2063,43 @@
                           (update acc 1 assoc v e)
                           (update acc 0 conj v)))
                       [[] {}] vs))]
-      (reduce-kv
-        (fn [[entity' upserts] a v]
-          (validate-attr a entity)
-          (validate-val v entity)
-          (cond
-            (not (contains? idents a))
-            [(assoc entity' a v) upserts]
+      (let [[entity' upserts]
+            (reduce-kv
+              (fn [[entity' upserts] a v]
+                (validate-attr a entity)
+                (validate-val v entity)
+                (cond
+                  (not (contains? idents a))
+                  [(assoc entity' a v) upserts]
 
-            (multi-value? db a v)
-            (let [[insert upsert] (split a v)]
-              [(cond-> entity'
-                 (not (empty? insert)) (assoc a insert))
-               (cond-> upserts
-                 (not (empty? upsert)) (assoc a upsert))])
+                  (multi-value? db a v)
+                  (let [[insert upsert] (split a v)]
+                    [(cond-> entity'
+                       (not (empty? insert)) (assoc a insert))
+                     (cond-> upserts
+                       (not (empty? upsert)) (assoc a upsert))])
 
-            :else
-            (if-some [e (resolve a v)]
-              [entity' (assoc upserts a {v e})]
-              [(assoc entity' a v) upserts])))
-        [{} {}]
-        entity))
+                  :else
+                  (if-some [e (resolve a v)]
+                    [entity' (assoc upserts a {v e})]
+                    [(assoc entity' a v) upserts])))
+              [{} {}]
+              entity)
+            schema (-schema db)
+            upserts' (reduce
+                       (fn [upserts tuple]
+                         (if (is-attr? db tuple :db.unique/identity)
+                           (let [tuple-attrs (get-in schema [tuple :db/tupleAttrs])
+                                 values      (mapv entity tuple-attrs)]
+                             (if (every? some? values)
+                               (if-some [existing (tuple-existing-entity db tuple values)]
+                                 (update upserts tuple assoc values existing)
+                                 upserts)
+                               upserts))
+                           upserts))
+                       upserts
+                       (-attrs-by db :db.type/tuple))]
+        [entity' (not-empty upserts')]))
     [entity nil]))
 
 (defn validate-upserts
@@ -2154,6 +2212,22 @@
 #?(:clj  (declare transact-tx-data-impl)
    :cljs (defn transact-tx-data-impl [initial-report initial-es]))
 
+#?(:clj
+   (defn- rollback-report!
+     [report]
+     (when-let [conn (some-> report :db-after :conn)]
+       (try
+         (.rollback ^java.sql.Connection conn)
+         (.setAutoCommit ^java.sql.Connection conn false)
+         (catch Throwable t
+           (throw (ex-info "Failed to rollback transaction for retry"
+                           {:error :transact/retry}
+                           t))))))
+   :cljs
+   (defn ^:private rollback-report!
+     [report]
+     report))
+
 (defn- retry-with-tempid [initial-report report es tempid upserted-eid]
   (if-some [eid (get (::upserted-tempids initial-report) tempid)]
     (util/raise "Conflicting upsert: " tempid " resolves"
@@ -2161,13 +2235,15 @@
       {:error :transact/upsert})
     ;; try to re-run from the beginning
     ;; but remembering that `tempid` will resolve to `upserted-eid`
-    (let [tempids' (-> (:tempids report)
-                     (assoc tempid upserted-eid))
-          report'  (-> initial-report
-                     (assoc :tempids tempids')
-                     (update ::upserted-tempids assoc tempid upserted-eid))]
-      (util/log "retry" tempid "->" upserted-eid)
-      (transact-tx-data-impl report' es))))
+    (do
+      (rollback-report! report)
+      (let [tempids' (-> (:tempids report)
+                       (assoc tempid upserted-eid))
+            report'  (-> initial-report
+                       (assoc :tempids tempids')
+                       (update ::upserted-tempids assoc tempid upserted-eid))]
+        (util/log "retry" tempid "->" upserted-eid)
+        (transact-tx-data-impl report' es)))))
 
 (def builtin-fn?
   #{:db.fn/call
@@ -2368,8 +2444,10 @@
             (recur report (cons [op e a v'] entities))
 
             (tempid? e)
-            (let [upserted-eid  (when (is-attr? db a :db.unique/identity)
-                                  (:e (first (-datoms db :avet a v nil nil))))
+            (let [upserted-eid  (or
+                                  (when (is-attr? db a :db.unique/identity)
+                                    (:e (first (-datoms db :avet a v nil nil))))
+                                  (tuple-upsert-eid db tempids e a v))
                   allocated-eid (get tempids e)]
               (if (and upserted-eid allocated-eid (not= upserted-eid allocated-eid))
                 (retry-with-tempid initial-report report initial-es e upserted-eid)
@@ -2394,18 +2472,34 @@
               (not (::internal (meta entity)))
               (tuple? db a))
             ;; allow transacting in tuples if they fully match already existing values
-            (let [tuple-attrs (get-in db [:schema a :db/tupleAttrs])]
-              (if (and
-                    (= (count tuple-attrs) (count v))
-                    (every? some? v)
-                    (every? 
-                      (fn [[tuple-attr tuple-value]]
-                        (let [db-value (:v (first (-datoms db :eavt e tuple-attr nil nil)))]
-                          (= tuple-value db-value)))
-                      (map vector tuple-attrs v)))
-                (recur report entities)
-                (util/raise "Can’t modify tuple attrs directly: " entity
-                  {:error :transact/syntax, :tx-data entity})))
+            (let [tuple-attrs   (get-in db [:schema a :db/tupleAttrs])
+                  queued-value (get-in report [::queued-tuples e a])]
+              (if queued-value
+                (if (and
+                      (= (count tuple-attrs) (count queued-value) (count v))
+                      (every? some? queued-value)
+                      (= v queued-value))
+                  (recur report entities)
+                  (util/raise "Can’t modify tuple attrs directly: " entity
+                    {:error :transact/syntax, :tx-data entity}))
+                (let [component-values (tuple-component-values db e tuple-attrs)
+                      prev-values      (when-some [db-before (:db-before report)]
+                                         (tuple-component-values db-before e tuple-attrs))
+                      effective-values (if prev-values
+                                         (mapv (fn [curr prev]
+                                                 (if (nil? curr) prev curr))
+                                           component-values prev-values)
+                                         component-values)]
+                  (if (and
+                        (= (count tuple-attrs) (count v))
+                        (every? some? v)
+                        (every?
+                          (fn [[tuple-value component-value]]
+                            (= tuple-value component-value))
+                          (map vector v effective-values)))
+                    (recur report entities)
+                    (util/raise "Can’t modify tuple attrs directly: " entity
+                      {:error :transact/syntax, :tx-data entity})))))
 
             (= op :db/add)
             (recur (transact-add report entity) entities)
@@ -2480,8 +2574,15 @@
     (util/raise "Bad transaction data " es ", expected sequential collection"
       {:error :transact/syntax, :tx-data es}))
   (let [es' (assoc-auto-tempids (:db-before report) es)
-        conn ^java.sql.Connection (:conn (:db-after report))
-        result (with-transaction conn
-                 (transact-tx-data-impl report es'))]
-    (.commit conn)
-    result))
+        conn ^java.sql.Connection (:conn (:db-after report))]
+    (try
+      (let [result (with-transaction conn
+                     (transact-tx-data-impl report es'))]
+        (.commit conn)
+        result)
+      (catch Throwable t
+        (try
+          (.rollback conn)
+          (.setAutoCommit conn false)
+          (catch Throwable _))
+        (throw t)))))
