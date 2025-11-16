@@ -7,6 +7,6 @@ global.performance = {
        }
 }
 
-require("../target/datascript.js");
+require("../target/dbval.js");
 
-datascript.bench.datascript._main(...process.argv.slice(2));
+dbval.bench.dbval._main(...process.argv.slice(2));

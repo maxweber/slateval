@@ -1,1 +1,1 @@
-{:externs ["datascript/externs.js"]}
+{:externs ["dbval/externs.js"]}
