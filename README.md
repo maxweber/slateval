@@ -81,4 +81,7 @@ database-related features are already solved by Sqlite or its
 
 - Consider to increase `tx0`, `emax` and `txmax`
 
+- Build an example application app with dbval + Sqlite as a database to check if
+  something is missing.
+
 - Maybe: [UUIDs for entity IDs](https://tonsky.me/blog/datascript-2/)
