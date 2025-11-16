@@ -1,324 +1,84 @@
-<img src="./extras/logo.svg">
-
-> What if creating a database would be as cheap as creating a Hashmap?
-
-An immutable in-memory database and Datalog query engine in Clojure and ClojureScript.
-
-DataScript is meant to run inside the browser. It is cheap to create, quick to query and ephemeral. You create a database on page load, put some data in it, track changes, do queries and forget about it when the user closes the page.
-
-DataScript databases are immutable and based on persistent data structures. In fact, they’re more like data structures than databases (think Hashmap). Unlike querying a real SQL DB, when you query DataScript, it all comes down to a Hashmap lookup. Or series of lookups. Or array iteration. There’s no particular overhead to it. You put a little data in it, it’s fast. You put in a lot of data, well, at least it has indexes. That should do better than you filtering an array by hand anyway. The thing is really lightweight.
-
-The intention with DataScript is to be a basic building block in client-side applications that needs to track a lot of state during their lifetime. There’s a lot of benefits:
-
-- Central, uniform approach to manage all application state. Clients working with state become decoupled and independent: rendering, server sync, undo/redo do not interfere with each other.
-- Immutability simplifies things even in a single-threaded browser environment. Keep track of app state evolution, rewind to any point in time, always render consistent state, sync in background without locking anybody.
-- Datalog query engine to answer non-trivial questions about current app state.
-- Structured format to track data coming in and out of DB. Datalog queries can be run against it too.
-
-## Latest version [![Build Status](https://travis-ci.org/tonsky/datascript.svg?branch=master)](https://travis-ci.org/tonsky/datascript)
-
-```clj
-;; lein
-[datascript "1.7.5"]
-```
-```clj
-;; deps.edn
-datascript/datascript {:mvn/version "1.7.5"}
-```
-
-Important! If you are using shadow-cljs, add
-
-```clj
-:compiler-options {:externs ["datascript/externs.js"]}
-```
-
-to your build (see [#432](https://github.com/tonsky/datascript/issues/432) [#298](https://github.com/tonsky/datascript/issues/298) [#216](https://github.com/tonsky/datascript/pull/216))
-
-## Support us
-
-<a href="https://patreon.com/tonsky" target="_blank"><img src="./extras/datascript_patreon.png"></a>
-
-## Resources
-
-Support:
-
-- Join [#datascript on Clojurians Slack](https://clojurians.slack.com/messages/C07V8N22C/) (grab invite [here](http://clojurians.net/))
-
-Books:
-
-- [Learning ClojureScript](https://www.packtpub.com/web-development/learning-clojurescript) has a chapter on DataScript
-
-Docs:
-
-- API Docs [![cljdoc badge](https://cljdoc.org/badge/datascript/datascript)](https://cljdoc.org/d/datascript/datascript/CURRENT)
-- [docs/queries.md](docs/queries.md)
-- [docs/tuples.md](docs/tuples.md)
-- [docs/storage.md](docs/storage.md)
-- [Getting started](https://github.com/tonsky/datascript/wiki/Getting-started)
-- [Tutorials](https://github.com/kristianmandrup/datascript-tutorial)
-- [Tips & tricks](https://github.com/tonsky/datascript/wiki/Tips-&-tricks)
-- [Triple Stores overview](https://github.com/threatgrid/asami/wiki/Introduction)
-- [Quick tutorial into Datalog](http://www.learndatalogtoday.org/)
-
-Posts:
-
-- [How DataScript fits into the current webdev ecosystem](http://tonsky.me/blog/decomposing-web-app-development/)
-- [DataScript internals explained](http://tonsky.me/blog/datascript-internals/)
-- [Sketch of client/server reactive architecture](http://tonsky.me/blog/the-web-after-tomorrow/)
-
-Talks:
-
-- “Frontend with Joy” talk (FPConf, August 2015): [video](https://www.youtube.com/watch?v=cRWrrHPrk9g) in Russian
-- “Programming Web UI with Database in a Browser” talk (PolyConf, July 2015): [slides](http://s.tonsky.me/conferences/2015.07%20polyconf.pdf), [video](https://www.youtube.com/watch?v=1dr-CzMMDD8)
-- “DataScript for Web Development” talk (Clojure eXchange, Dec 2014): [slides](http://s.tonsky.me/conferences/2014.12%20clojure%20eXchange.pdf), [video](https://skillsmatter.com/skillscasts/6038-datascript-for-web-development)
-- “Building ToDo list with DataScript” webinar (ClojureScript NYC, Dec 2014): [video](http://vimeo.com/114688970), [app](https://github.com/tonsky/datascript-todo)
-- DataScript hangout (May 2014, in Russian): [video](http://www.youtube.com/watch?v=jhBC81pczZY)
-
-Projects using DataScript:
-
-- [Roam Research](https://roamresearch.com/), a note-taking graph database
-- [LogSeq](http://logseq.com), a local-first, non-linear, outliner notebook
-- [Athens Research](https://github.com/athensresearch/athens), a tool for networked thought
-- [Hulunote](https://www.hulunote.com/), a tool for networked thought
-- [Cognician](https://www.cognician.com/), coaching platform
-- [LightMesh](http://lightmesh.com/), datacenter management
-- [PartsBox](https://partsbox.io/), electronic parts management
-- [I am Fy](https://www.iamfy.co/), accessories e-shop
-- [Under Whose Command?](https://myanmar.securityforcemonitor.org/), an interactive report by Security Force Monitor
-- [gluino.io](https://gluino.io/), an AI with swagger
-- [Pinfigurator](https://kevinlynagh.com/pinfigurator/), a microcontroller search tool
-- [Precursor](http://precursorapp.com/), collaborative prototyping tool
-- [Acha-acha](http://tonsky.me/blog/acha-acha/), GitHub achievements
-- [Showkr](http://showkr.solovyov.net), flickr gallery viewer ([sources](https://github.com/piranha/showkr))
-- [Zetawar](http://www.zetawar.com), turn-based tactical strategy game
-- [Lemmings](https://www.lemmings.io), incubator focused on art & artificial intelligence
-
-Related projects:
-
-- [DataScript-Transit](https://github.com/tonsky/datascript-transit), transit serialization for database and datoms
-- [DataScript SQL Storages](https://github.com/tonsky/datascript-storage-sql), durable storage implementations for popular SQL databases
-- [Posh](https://github.com/mpdairy/posh), lib that lets you use a single DataScript db to store Reagent app state
-- [re-posh](https://github.com/denistakeda/re-posh), use re-frame with DataScript storage
-- [DataScript-mori](https://github.com/typeetfunc/datascript-mori), DataScript & Mori wrapper for use from JS
-- [DatSync](https://github.com/metasoarous/datsync), Datomic ↔︎ DataScript syncing/replication utilities
-- [Intension](https://github.com/alandipert/intension), lib to convert associative structures to in-memory databases for querying them
-- [Datamaps](https://github.com/djjolicoeur/datamaps), lib designed to leverage datalog queries to query arbitrary maps.
-
-Demo applications:
-
-- [Localisation Demo with Om Next](http://simonb.com/blog/2016/01/24/om-next-datascript-localisation-demo/)
-- ToDo, task manager demo app (persistence via localStorage and transit, filtering, undo/redo): [sources](https://github.com/tonsky/datascript-todo), [live](http://tonsky.me/datascript-todo/)
-- CatChat, chat demo app: [sources](https://github.com/tonsky/datascript-chat), [code walkthrough](http://tonsky.me/blog/datascript-chat/), [live](http://tonsky.me/datascript-chat/)
-- clj-crud, demo CRUD app: [sources](https://github.com/thegeez/clj-crud), [blog post](http://thegeez.net/2014/04/30/datascript_clojure_web_app.html)
-- [OmNext TodoMVC](https://github.com/madvas/todomvc-omnext-datomic-datascript)
-
-## Usage examples
-
-For more examples, see [our acceptance test suite](test/datascript/test/).
-
-```clj
-(require '[datascript.core :as d])
-
-;; Implicit join, multi-valued attribute
-
-(let [schema {:aka {:db/cardinality :db.cardinality/many}}
-      conn   (d/create-conn schema)]
-  (d/transact! conn [ { :db/id -1
-                        :name  "Maksim"
-                        :age   45
-                        :aka   ["Max Otto von Stierlitz", "Jack Ryan"] } ])
-  (d/q '[ :find  ?n ?a
-          :where [?e :aka "Max Otto von Stierlitz"]
-                 [?e :name ?n]
-                 [?e :age  ?a] ]
-       @conn))
-
-;; => #{ ["Maksim" 45] }
-
-
-;; Destructuring, function call, predicate call, query over collection
-
-(d/q '[ :find  ?k ?x
-        :in    [[?k [?min ?max]] ...] ?range
-        :where [(?range ?min ?max) [?x ...]]
-               [(even? ?x)] ]
-      { :a [1 7], :b [2 4] }
-      range)
-
-;; => #{ [:a 2] [:a 4] [:a 6] [:b 2] }
-
-
-;; Recursive rule
-
-(d/q '[ :find  ?u1 ?u2
-        :in    $ %
-        :where (follows ?u1 ?u2) ]
-      [ [1 :follows 2]
-        [2 :follows 3]
-        [3 :follows 4] ]
-     '[ [(follows ?e1 ?e2)
-         [?e1 :follows ?e2]]
-        [(follows ?e1 ?e2)
-         [?e1 :follows ?t]
-         (follows ?t ?e2)] ])
-
-;; => #{ [1 2] [1 3] [1 4]
-;;       [2 3] [2 4]
-;;       [3 4] }
-
-
-;; Aggregates
-
-(d/q '[ :find ?color (max ?amount ?x) (min ?amount ?x)
-        :in   [[?color ?x]] ?amount ]
-     [[:red 10]  [:red 20] [:red 30] [:red 40] [:red 50]
-      [:blue 7] [:blue 8]]
-     3)
-
-;; => [[:red  [30 40 50] [10 20 30]]
-;;     [:blue [7 8] [7 8]]]
-```
-
-## Using from vanilla JS
-
-DataScript can be used from any JS engine without additional dependencies:
-
-```html
-<script src="https://github.com/tonsky/datascript/releases/download/1.7.5/datascript-1.7.5.min.js"></script>
-```
-
-or as a CommonJS module ([npm page](https://www.npmjs.org/package/datascript)):
-
-```
-npm install datascript
-```
-
-```js
-var ds = require('datascript');
-```
-
-or as a RequireJS module:
-
-```js
-require(['datascript'], function(ds) { ... });
-```
-
-Queries:
-
-* Query and rules should be EDN passed as strings
-* Results of `q` are returned as regular JS arrays
-
-Entities:
-
-* Entities returned by `entity` call are lazy as in Clojure
-* Use `e.get("prop")`, `e.get(":db/id")`, `e.db` to access entity properties
-* Entities implement ECMAScript 6 Map interface (has/get/keys/...)
-
-Transactions:
-
-* Use strings such as `":db/id"`, `":db/add"`, etc. instead of db-namespaced keywords
-* Use regular JS arrays and objects to pass data to `transact` and `db_with`
-
-Transaction reports:
-
-* `report.tempids` has string keys (`"-1"` for entity tempid `-1`), use `resolve_tempid` to set up a correspondence
-
-Check out [test/js/tests.js](test/js/tests.js) for usage examples.
-
-## Project status
-
-Stable. Most of the features done, expecting non-breaking API additions and performance optimizations. No docs at the moment, use examples & [Datomic documentation](https://docs.datomic.com/on-prem/index.html#sec-3).
-
-The following features are supported:
-
-* Database as a value: each DB is an immutable value. New DBs are created on top of old ones, but old ones stay perfectly valid too
-* Triple store model
-* EAVT, AEVT and AVET indexes
-* Multi-valued attributes via `:db/cardinality :db.cardinality/many`
-* Lazy entities and `:db/valueType :db.type/ref` auto-expansion
-* Database “mutations” via `transact!`
-* Callback-based analogue to txReportQueue via `listen!`
-* Direct index lookup and iteration via `datoms` and `seek-datoms`
-* Filtered databases via `filter`
-* Lookup refs
-* Unique constraints, upsert
-* Pull API (thx [David Thomas Hume](https://github.com/dthume))
-
-Query engine features:
-
-* Implicit joins
-* Query over DB or regular collections
-* Parameterized queries via `:in` clause
-* Tuple, collection, relation binding forms in `:in` clause
-* Query over multiple DB/collections
-* Predicates and user functions in query
-* Negation and disjunction
-* Rules, recursive rules
-* Aggregates
-* Find specifications
-
-Interface differences:
-
-* Conn is just an atom storing last DB value, use `@conn` instead of `(d/db conn)`
-* Instead of `#db/id[:db.part/user -100]` just use `-100` in place of `:db/id` or entity id
-* Transactor functions can be called as `[:db.fn/call f args]` where `f` is a function reference and will take db as first argument (thx [@thegeez](https://github.com/thegeez))
-* In ClojureScript, custom query functions and aggregates should be passed as source instead of being referenced by symbol (due to lack of `resolve` in CLJS)
-* Custom aggregate functions are called via aggregate keyword: `:find (aggregate ?myfn ?e) :in $ ?myfn`
-* Additional `:db.fn/retractAttribute` shortcut
-* Transactions are not annotated by default with `:db/txInstant`
-* When “transaction function” is called, the db that this function receive is a “partial db” relative to it's position in transaction.
-
-## Differences from Datomic
-
-* DataScript is built totally from scratch and is not related by any means to the popular Clojure database Datomic
-* Runs in a browser and/or in a JVM
-* Simplified schema, not queryable
-* Attributes do not have to be declared in advance. Put them to schema only when you need special behaviour from them
-* Any type can be used for values
-* No `:db/ident` for attributes, keywords are _literally_ attribute values, no integer id behind them
-* No schema migrations
-* No full-text search, no partitions
-* No external dependencies
-
-Aimed at interactive, long-living browser applications, DataScript DBs operate in constant space. If you do not add new entities, just update existing ones, or clean up database from time to time, memory consumption will be limited. This is unlike Datomic which keeps history of all changes, thus grows monotonically. DataScript does not track history by default, but you can do it via your own code if needed.
-
-Some of the features are omitted intentionally. Different apps have different needs in storing/transfering/keeping track of DB state. DataScript is a foundation to build exactly the right storage solution for your needs without selling too much “vision”.
-
-## Contributing
-
-### Testing
-
-Setup
-
-    npm install ws
-
-Running the tests
-
-    clj -M:test -m kaocha.runner
-
-Watching tests:
-
-    ./script/watch.sh
-
-### Benchmarking and Datomic compatibility
-
-`datomic-free` is a dependency not available on Clojars or Maven Central.
-
-1. Download `datomic-free` from https://my.datomic.com/downloads/free
-2. Unzip it
-3. Inside the unzipped folder run `./bin/maven-install`
-
-Run compatibility checks:
-
-    clj -M:datomic
-
-Benchmark:
-
-    cd bench
-    ./bench.clj
-
-## License
-
-Copyright © 2014–2024 Nikita Prokopov
-
-Licensed under Eclipse Public License (see [LICENSE](LICENSE)).
+# dbval
+
+dbval is a fork of [Datascript](https://github.com/tonsky/datascript) and a
+proof-of-concept (aka 'do not use it in production') that you can implement a
+library that offers Datomic-like semantics on top of a mutable relational
+database like Sqlite.
+
+The most important goal is to serve the database as a value, meaning you can get
+the current database value and query it as long as you like without that it
+changes underneath you. You can also get the database as a value for any point
+in the past.
+
+Sqlite was chosen since you have no network-round trip when you read from the
+database. Thereby you can do [hundreds of small
+queries](https://www.sqlite.org/np1queryprob.html) instead of trying to force
+everything into one big SQL statement.
+
+The idea to have something Datomic-like on top of a relational database was
+already born in 2013 during a project where we were forced to use Postgres
+instead of Datomic. It was a side quest ever since. We tried many different
+database schemas. In 2025 a breakthrough were accomplished after learning about
+FoundationDB and that [Griffin already has a fork of Datascript that runs on top
+of FoundationDB](https://www.juxt.pro/blog/clojure-in-griffin/#foundationdb).
+
+While FoundationDB is an amazing piece of technology it requires a lot of
+infrastructure. For us mortals there is basically only the option to use its
+Kubernetes operator. Meanwhile the [Rails
+community](https://m.youtube.com/watch?v=Sc4FJ0EZTAg) and projects like
+[Turso](https://turso.tech/) proofed that it is viable to have one Sqlite
+database per (SaaS) customer.
+
+At its core FoundationDB is a transactional ordered key value store. Something
+you can mimic in Sqlite with a table like:
+
+    create table dbval (k blob not null, primary key(k)) WITHOUT ROWID;
+
+dbval only needs the key portion. Consequently, you are dealing with a sorted
+set and Datascript's core is a
+[persistent-sorted-set](https://github.com/tonsky/persistent-sorted-set).
+
+I first assumed that I need to make one part of a datom mutable, so that I can
+mark it as retracted. Until I discovered that the sorting of `t` in the Datomic
+indexes `:eavt`, `:aevt`, `:avet` and `:vaet` allows to figure out what the
+current state was at a given point in time, so that you can serve an immutable
+database value. The secret sauce can be found in the `datoms-filter` transducer.
+
+Back to FoundationDB, its keys and values are just byte arrays. The key contains
+a tuple and its byte array representation allows to sort it, even if it is a mix
+of different types (String, double, UUID, nested tuples, etc.). You will notice
+that you can represent a (Datomic) datom as a tuple. Luckily, the tuple to byte
+array logic is available via [Tuple
+class](https://apple.github.io/foundationdb/javadoc/com/apple/foundationdb/tuple/Tuple.html).
+
+Our current SaaS runs Datomic in production since 2018. Overall we are happy
+with it. The biggest challenge for us were large migrations that have to be
+split into many smaller transactions, to avoid that the transactor is occupied
+for too long. Otherwise customers have to wait a couple of seconds before their
+write is processed. The next generation of our SaaS runs one logical Datomic
+database per customer (with a shared transactor pair) to avoid this issue. Your
+challenges may vary but I think it's important that open source alternatives to
+Datomic exist, so that you have the option to make different trade-offs.
+
+Luckily there are already a couple of Datomic open source alternatives. Why
+another one? Some does not offer you the database as a value. But the key is
+that dbval tries to pick a minimal scope, since implementing a database almost
+from scratch is a humongous task. For that reason dbval considers itself as a
+database library and only tries to marry Datascript with Sqlite. Most
+database-related features are already solved by Sqlite or its
+[ecosystem](https://litestream.io/).
+
+
+## TODOs
+
+- Mature the library into something 'production-ready'
+
+- Also adapt the ClojureScript parts (broken at the moment).
+
+    - There is [a JS libary](https://github.com/josephg/fdb-tuple) that implements the FoundationDB tuple encoding.
+    
+    - Doing [synchronous SQLite reads and writes in JavaScript](https://blog.cloudflare.com/sqlite-in-durable-objects/#reads-and-writes-are-synchronous) is viable (no need to make everything async).
+
+- Consider to increase `tx0`, `emax` and `txmax`
+
+- Maybe: [UUIDs for entity IDs](https://tonsky.me/blog/datascript-2/)
