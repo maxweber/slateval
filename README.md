@@ -17,8 +17,10 @@ everything into one big SQL statement.
 
 The idea to have something Datomic-like on top of a relational database was
 already born in 2013 during a project where we were forced to use Postgres
-instead of Datomic. It was a side quest ever since. We tried many different
-database schemas. In 2025 a breakthrough were accomplished after learning about
+instead of Datomic. It was a side quest ever since. We
+([@DerGuteMoritz](https://github.com/dergutemoritz) and
+[me](https://github.com/maxweber)) tried many different database schemas over
+the years. In 2025 a breakthrough were accomplished after learning about
 FoundationDB and that [Griffin already has a fork of Datascript that runs on top
 of FoundationDB](https://www.juxt.pro/blog/clojure-in-griffin/#foundationdb).
 
@@ -42,7 +44,16 @@ I first assumed that I need to make one part of a datom mutable, so that I can
 mark it as retracted. Until I discovered that the sorting of `t` in the Datomic
 indexes `:eavt`, `:aevt`, `:avet` and `:vaet` allows to figure out what the
 current state was at a given point in time, so that you can serve an immutable
-database value. The secret sauce can be found in the `datoms-filter` transducer.
+database value. The secret sauce can be found in the `dbval.db/datoms-filter`
+transducer.
+
+One obvious downside is that the database will keep growing forever, potentially
+making `dbval.db/datoms-filter` slower and slower over time. However, from one
+of the many Datomic talks I learned a nice trick to mitigate this. You can have
+one table that contain the complete history, while another one might only
+contain the history of the last 30 days. Consequently, you need to query the
+former table for older historic database values, while the latter will stay
+smaller and is faster to query.
 
 Back to FoundationDB, its keys and values are just byte arrays. The key contains
 a tuple and its byte array representation allows to sort it, even if it is a mix
@@ -50,6 +61,31 @@ of different types (String, double, UUID, nested tuples, etc.). You will notice
 that you can represent a (Datomic) datom as a tuple. Luckily, the tuple to byte
 array logic is available via [Tuple
 class](https://apple.github.io/foundationdb/javadoc/com/apple/foundationdb/tuple/Tuple.html).
+
+One question that might arise is how you can have different indexes in a
+FoundationDB-like model. As you can see from the `create table` SQL statement
+above we only have a single column (with a btree index on it). In
+[FoundationDB](https://apple.github.io/foundationdb/simple-indexes-java.html)
+you use a prefix to differentiate between indexes. You can think of a bit like
+subfolders on your file system. Let's assume we have the following datom:
+
+    [123 :language "Clojure" 1001 true]
+
+Then dbval maintains the following indexes, by inserting the corresponding
+tuples into the dbval table:
+
+| 0       | 1        | 2        | 3         | 4        | 5     |
+|---------|----------|----------|-----------|----------|-------|
+| "eavt"  | 123      | :language| "Clojure" | 1001     | true  |
+| "aevt"  | :language| 123      | "Clojure" | 1001     | true  |
+| "avet"  | :language| "Clojure"| 123       | 1001     | true  |
+| "teav"  | 1001     | 123      | :language | "Clojure"| true  |
+
+
+The last boolean indicates if the Datom was added or retracted. Like Datascript
+dbval does not maintain a "vaet" index (like Datomic does). Additionally dbval
+maintains the "teav" index that can be used to efficiently retrieve the most
+recent transaction.
 
 Our current SaaS runs Datomic in production since 2018. Overall we are happy
 with it. The biggest challenge for us were large migrations that have to be
@@ -72,6 +108,13 @@ database-related features are already solved by Sqlite or its
 ## TODOs
 
 - Mature the library into something 'production-ready'
+
+- dbval should add a `:db/txInstant` to each transaction entity with a
+  `java.util.Date` of when the transaction was transacted.
+
+- Add an equivalent to `datomic.api/as-of`
+
+- Better connection management
 
 - Also adapt the ClojureScript parts (broken at the moment).
 
