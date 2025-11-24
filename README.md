@@ -104,6 +104,13 @@ database library and only tries to marry Datascript with Sqlite. Most
 database-related features are already solved by Sqlite or its
 [ecosystem](https://litestream.io/).
 
+## Quickstart
+
+At the moment the project is a proof-of-concept and not meant to be used in
+real-world applications. However, if you want to hack on it a good starting
+point is to run the unit tests via:
+
+    script/test_clj.sh
 
 ## TODOs
 
