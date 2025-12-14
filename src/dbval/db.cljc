@@ -1073,7 +1073,6 @@
           pred       #?(:clj  (vpred v)
                         :cljs #(= v %))
           multival?  (contains? (-attrs-by db :db.cardinality/many) a)
-          tuples ^java.util.NavigableSet (.-tuples db)
           index (pattern->order db
                                 pattern)
           [begin end] (apply tuple-range
@@ -1138,7 +1137,6 @@
                       index
                       [c0 c1 c2 c3])
           [e a v tx] (resolve-datom* db e a v tx)
-          tuples ^java.util.NavigableSet (.-tuples db)
           [begin _end] (apply tuple-range
                               (name index)
                               (take-while
@@ -1167,7 +1165,6 @@
                       index
                       [c0 c1 c2 c3])
           [e a v tx] (resolve-datom* db e a v tx)
-          tuples ^java.util.NavigableSet (.-tuples db)
           start (take-while
                  some?
                  (rest
@@ -1195,8 +1192,7 @@
   (-index-range [db attr start end]
     (validate-indexed db :avet attr nil nil nil)
     (validate-attr attr (list '-index-range 'db attr start end))
-    (let [tuples ^java.util.NavigableSet (.-tuples db)
-          [_ _ start*] (resolve-datom* db nil attr start nil)
+    (let [[_ _ start*] (resolve-datom* db nil attr start nil)
           [begin _end] (apply tuple-range
                               "avet"
                               (pr-str attr)
@@ -1454,8 +1450,6 @@
       :rschema       (rschema (merge implicit-schema schema))
       :db-file       db-file
       :conn          conn
-      :tuples        (java.util.TreeSet.
-                      ^java.util.Comparator byte-array-comparator)
       :max-eid       e0
       :max-tx        tx0
       :pull-patterns (lru/cache 100)
