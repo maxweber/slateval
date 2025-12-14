@@ -1967,17 +1967,15 @@
 
 (defn q-max-tx
   [db]
-  (let [tuples ^java.util.NavigableSet (:tuples db)
-        [begin end] (tuple-range "teav")]
-    (or (some->
-         (.subSet (.descendingSet tuples)
-                  end
-                  true
-                  begin
-                  true)
-         (first)
-         (tuple-from-bytes)
-         (second))
+  (let [[begin end] (tuple-range "teav")
+        iterator (slice {:db db
+                         :begin begin
+                         :end end
+                         :reverse true})]
+    (or (some-> iterator
+                (first)
+                (tuple-from-bytes)
+                (second))
         tx0)))
 
 (defn with-datom [db ^Datom datom]
