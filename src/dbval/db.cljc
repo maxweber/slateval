@@ -5,6 +5,7 @@
     [clojure.data]
     [clojure.edn :as edn]
     [clojure.string :as str]
+    [clojure.java.io :as io]
     #?(:clj [dbval.inline :refer [update]])
     [dbval.lru :as lru]
     [dbval.util :as util]
@@ -1444,6 +1445,7 @@
                     (.getCanonicalPath
                      (java.io.File/createTempFile (str (random-uuid))
                                                   ".db")))
+        _ (io/make-parents db-file)
         ;; TODO: consider how to close the connection:
         conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})
         _ (create-table! conn)
