@@ -1020,11 +1020,10 @@
                            (do (reset! next-val nil) (close!) false))))]
 
         (reify java.util.Iterator
-          (hasNext [_]
+          (hasNext [this]
             (or @advanced
-                (let [ok (advance!)]
-                  (reset! advanced ok)
-                  ok)))
+                (reset! advanced
+                        (boolean (advance!)))))
           (next [_]
             (let [ok (or @advanced (advance!))]
               (when-not ok
