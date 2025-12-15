@@ -1750,21 +1750,12 @@
     (keyword? eid)
     (-> (-datoms db :avet :db/ident eid nil nil) first :e)
 
-    ;; Legacy integer IDs - return nil (entity not found)
-    ;; since entities now use UUIDs. Tests can use lookup refs or
-    ;; look up the generated UUID via (:tempids tx-result).
-    (integer? eid)
-    nil
-
     :else
     (util/raise "Expected UUID or lookup ref for entity id, got " eid
       {:error :entity-id/syntax, :entity-id eid})))
 
 (defn+ ^boolean eid-exists? [db eid]
   (= eid (-> (-seek-datoms db :eavt eid nil nil nil) first :e)))
-
-;; Alias for backwards compatibility
-(def ^:no-doc numeric-eid-exists? eid-exists?)
 
 (defn+ ^number entid-strict [db eid]
   (or
@@ -1779,8 +1770,8 @@
 
 ;;;;;;;;;; Transacting
 
-(defn- legacy-tempid?
-  "Returns true if id is a legacy tempid format (negative integer or string)."
+(defn- tempid?
+  "Returns true if id is a tempid format (negative integer or string)."
   [id]
   (or (and (integer? id) (neg? id))
       (string? id)))
@@ -1797,7 +1788,7 @@
                        (is-attr? db a :db.unique/identity)
                        (not (nil? v))
                        ;; Skip ref attributes with tempid values - can't look up by unresolved tempid
-                       (not (and (ref? db a) (legacy-tempid? v))))
+                       (not (and (ref? db a) (tempid? v))))
               ;; Try to find existing entity with this unique value
               (-> (-datoms db :avet a v nil nil) first :e)))
           entity)))
@@ -1820,7 +1811,7 @@
                            (if (and (sequential? entity)
                                     (= :db/add (first entity)))
                              (let [[_ e a v] entity]
-                               (if (legacy-tempid? e)
+                               (if (tempid? e)
                                  (if (contains? idents a)
                                    ;; For identity attrs, collect all values as a list
                                    (update-in acc [e a] (fnil conj []) v)
@@ -1911,10 +1902,10 @@
 
 (defn- assign-entity-ids
   "Assigns random UUIDs to entities that don't have a :db/id.
-   Also converts legacy tempid formats (negative integers, strings) to UUIDs.
+   Converts tempids (negative integers, strings) to UUIDs.
    For entity maps, generates a new UUID if :db/id is missing.
    For vector ops like [:db/add ...], the entity ID must be provided.
-   Returns {:tx-data processed-tx-data :id-map legacy-id->uuid-map}."
+   Returns {:tx-data processed-tx-data :id-map tempid->uuid-map}."
   [db tx-data]
   ;; First pass: find all upserts and map tempids to existing entity IDs
   ;; Also detect within-transaction upserts (multiple entities with same unique identity value)
@@ -1928,7 +1919,7 @@
         _ (doseq [entity tx-data]
             (when (map? entity)
               (let [old-id (:db/id entity)]
-                (when (and (legacy-tempid? old-id)
+                (when (and (tempid? old-id)
                            (not (contains? @tempid->upsert old-id)))
                   ;; Check if it upserts to an existing entity in db
                   (if-let [upsert-id (find-upsert-id db entity)]
@@ -1945,7 +1936,7 @@
                                     (swap! tempid->upsert assoc old-id new-uuid)
                                     (swap! identity-value->uuid assoc key new-uuid))))))
                           entity))))))
-        ;; Use an atom to track legacy-id -> UUID mappings within this transaction
+        ;; Use an atom to track tempid -> UUID mappings within this transaction
         id-map (atom {})]
     (letfn [(resolve-id [id]
               (cond
@@ -1954,7 +1945,7 @@
                 (keyword? id) id     ;; :db/ident or :db/current-tx
                 ;; tx-id string aliases must pass through to be resolved later
                 (and (string? id) (or (= id "datomic.tx") (= id "dbval.tx"))) id
-                (legacy-tempid? id)
+                (tempid? id)
                 (or
                   ;; Check if this tempid upserts to an existing entity
                   (get @tempid->upsert id)
@@ -1964,13 +1955,6 @@
                     (let [uuid (random-uuid)]
                       (swap! id-map assoc id uuid)
                       uuid)))
-                (integer? id)
-                ;; Positive integer - treat as legacy entity ID, convert to UUID
-                (if-let [uuid (get @id-map id)]
-                  uuid
-                  (let [uuid (random-uuid)]
-                    (swap! id-map assoc id uuid)
-                    uuid))
                 :else id))
             (process-entity [entity]
               (util/cond+
@@ -2721,7 +2705,7 @@
                     ;; transaction are visible when searching for duplicates
                     (update :db-after assoc :max-tx tx-id))
         {:keys [tx-data id-map]} (assign-entity-ids (:db-before report') es)
-        ;; Pre-populate tempids with the legacy ID -> UUID mapping
+        ;; Pre-populate tempids with the tempid -> UUID mapping
         report'' (update report' :tempids merge id-map)
         conn ^java.sql.Connection (:conn (:db-after report''))]
     (try
