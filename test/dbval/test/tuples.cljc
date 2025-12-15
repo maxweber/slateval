@@ -217,31 +217,32 @@
 
 ;; issue-473
 (deftest test-upsert-by-tuple-components
-  (let [db   (d/empty-db {:a+b {:db/tupleAttrs [:a :b]
-                                :db/unique :db.unique/identity}})
-        db'  (d/db-with db [{:a "A" :b "B" :name "Ivan"}])]
+  (let [db*  (fn [] (d/db-with
+                      (d/empty-db {:a+b {:db/tupleAttrs [:a :b]
+                                         :db/unique :db.unique/identity}})
+                      [{:a "A" :b "B" :name "Ivan"}]))]
     (is (= #{[1 :a "A"]
              [1 :b "B"]
              [1 :a+b ["A" "B"]]
              [1 :name "Oleg"]}
           (tdc/all-datoms
-            (d/db-with db'
+            (d/db-with (db*)
               [{:db/id -1 :a "A" :b "B" :name "Oleg"}]))))
     (is (= #{[1 :a "A"]
              [1 :b "B"]
              [1 :a+b ["A" "B"]]
              [1 :name "Oleg"]}
           (tdc/all-datoms
-            (d/db-with db'
+            (d/db-with (db*)
               [{:a "A" :b "B" :name "Oleg"}]))))
     (is (= #{[1 :a "A"]
              [1 :b "B"]
              [1 :a+b ["A" "B"]]
              [1 :name "Oleg"]}
           (tdc/all-datoms
-            (d/db-with db'
+            (d/db-with (db*)
               [[:db/add -1 :a "A"]
-               [:db/add -1 :b "B"] 
+               [:db/add -1 :b "B"]
                [:db/add -1 :name "Oleg"]]))))))
 
 (deftest test-lookup-refs

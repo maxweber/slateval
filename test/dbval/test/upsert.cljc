@@ -160,7 +160,7 @@
         (is (= {:db/id 1 :name "Ivan" :email "@1" :slugs ["ivan1" "ivan2"]}
               (pull tx2 1)))
         (is (thrown-with-msg? Throwable #"Conflicting upserts:"
-                              (d/with (:db-after tx) [{:slugs ["ivan1" "petr1"]}])))))
+                              (d/with (:db-after tx2) [{:slugs ["ivan1" "petr1"]}])))))
     
     (testing "upsert by ref"
       (let [tx (d/with (db*) [{:ref 3 :age 36}])]
@@ -274,16 +274,14 @@
                {:db/id "B", :name "Bob"}]))))))
 
 (deftest test-vector-upsert
-  (let [db (-> (d/empty-db {:name {:db/unique :db.unique/identity}})
-             (d/db-with [{:db/id -1, :name "Ivan"}]))]
-    (are [tx res] (= res (tdc/all-datoms (d/db-with db tx)))
-      [[:db/add -1 :name "Ivan"]
-       [:db/add -1 :age 12]]
-      #{[1 :age 12] [1 :name "Ivan"]}
-         
-      [[:db/add -1 :age 12]
-       [:db/add -1 :name "Ivan"]]
-      #{[1 :age 12] [1 :name "Ivan"]}))
+  (let [db* (fn [] (-> (d/empty-db {:name {:db/unique :db.unique/identity}})
+                       (d/db-with [{:db/id -1, :name "Ivan"}])))]
+    (is (= #{[1 :age 12] [1 :name "Ivan"]}
+           (tdc/all-datoms (d/db-with (db*) [[:db/add -1 :name "Ivan"]
+                                             [:db/add -1 :age 12]]))))
+    (is (= #{[1 :age 12] [1 :name "Ivan"]}
+           (tdc/all-datoms (d/db-with (db*) [[:db/add -1 :age 12]
+                                             [:db/add -1 :name "Ivan"]])))))
   
   (let [db (-> (d/empty-db {:name  {:db/unique :db.unique/identity}})
              (d/db-with [[:db/add -1 :name "Ivan"]
