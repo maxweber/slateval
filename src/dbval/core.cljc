@@ -554,27 +554,34 @@
    (doseq [[tag cb] data-readers] (edn/register-tag-parser! tag cb)))
 
 
+;; UUID-based ID generation
+
+(def gen-id
+  "Generates a random UUID for use as an entity id.
+   Call as (gen-id) to get a new UUID."
+  #?(:clj  #(java.util.UUID/randomUUID)
+     :cljs #(random-uuid)))
+
 ;; Datomic compatibility layer
 
-(def ^:private last-tempid (atom -1000000))
-
 (defn tempid
-  "Allocates and returns an unique temporary id (a negative integer). Ignores `part`. Returns `x` if it is specified.
-  
-   Exists for Datomic API compatibility. Prefer using negative integers directly if possible."
+  "Allocates and returns a unique temporary id. Returns a random UUID, or :db/current-tx for the tx partition.
+
+   Exists for Datomic API compatibility. Prefer using (gen-id) or UUIDs directly."
   ([part]
    (if (= part :db.part/tx)
      :db/current-tx
-     (swap! last-tempid dec)))
+     (gen-id)))
   ([part x]
    (if (= part :db.part/tx)
      :db/current-tx
      x)))
 
 (defn resolve-tempid
-  "Does a lookup in tempids map, returning an entity id that tempid was resolved to.
-   
-   Exists for Datomic API compatibility. Prefer using map lookup directly if possible."
+  "Does a lookup in tempids map, returning an entity id that a legacy tempid was resolved to.
+
+   With UUID-based IDs, this looks up the mapping from legacy IDs (negative integers, strings)
+   to UUIDs that were assigned during transaction processing."
   [_db tempids tempid]
   (get tempids tempid))
 

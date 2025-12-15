@@ -98,18 +98,21 @@
 ;; Core tests
 
 (deftest test-protocols
-  (let [schema {:aka {:db/cardinality :db.cardinality/many}}
+  (let [schema {:aka {:db/cardinality :db.cardinality/many}
+                :name {:db/unique :db.unique/identity}}
         db (d/db-with (d/empty-db schema)
-             [{:db/id 1 :name "Ivan" :aka ["IV" "Terrible"]}
-              {:db/id 2 :name "Petr" :age 37 :huh? false}])]
-    (is (= #{:schema :tuples :max-eid :max-tx :rschema :pull-patterns :pull-attrs :hash :db-file :conn}
+             [{:name "Ivan" :aka ["IV" "Terrible"]}
+              {:name "Petr" :age 37 :huh? false}])
+        ivan-id (:e (first (d/datoms db :avet :name "Ivan")))
+        petr-id (:e (first (d/datoms db :avet :name "Petr")))]
+    (is (= #{:schema :max-tx :rschema :pull-patterns :pull-attrs :hash :db-file :conn :tuples}
           (set (keys db))))
     (is (map? db))
     (is (seqable? (:eavt db)))
     (is (= (set (d/datoms db :eavt))
-          #{(d/datom 1 :aka "IV")
-            (d/datom 1 :aka "Terrible")
-            (d/datom 1 :name "Ivan")
-            (d/datom 2 :age 37)
-            (d/datom 2 :name "Petr")
-            (d/datom 2 :huh? false)}))))
+          #{(d/datom ivan-id :aka "IV")
+            (d/datom ivan-id :aka "Terrible")
+            (d/datom ivan-id :name "Ivan")
+            (d/datom petr-id :age 37)
+            (d/datom petr-id :name "Petr")
+            (d/datom petr-id :huh? false)}))))

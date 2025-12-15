@@ -11,7 +11,8 @@
     [dbval.util :as util]
     [me.tonsky.persistent-sorted-set :as set]
     [me.tonsky.persistent-sorted-set.arrays :as arrays]
-    [taoensso.nippy :as nippy])
+    [taoensso.nippy :as nippy]
+    [com.yetanalytics.squuid :as squuid])
   #?(:clj (:import clojure.lang.IFn$OOL))
   #?(:cljs (:require-macros [dbval.db :refer [case-tree combine-cmp defn+ defcomp defrecord-updatable int-compare validate-attr validate-val]]))
   (:refer-clojure :exclude [seqable? #?(:clj update)]))
@@ -28,17 +29,15 @@
      (def IllegalArgumentException js/Error)
      (def UnsupportedOperationException js/Error)))
 
-(def ^:const e0
-  0)
+;; tx0 is the nil UUID, used as a minimum bound for transaction ID comparisons
+;; Squuids are time-ordered, so this will always be less than any real tx ID
+(def tx0
+  #uuid "00000000-0000-0000-0000-000000000000")
 
-(def ^:const tx0
-  0x20000000)
-
-(def ^:const emax
-  0x7FFFFFFF)
-
-(def ^:const txmax
-  0x7FFFFFFF)
+(defn uuid<=
+  "Compares two UUIDs. Returns true if a <= b."
+  [a b]
+  (<= (compare a b) 0))
 
 (def ^:const implicit-schema
   {:db/ident {:db/unique :db.unique/identity}})
@@ -90,7 +89,7 @@
 
 #?(:clj
    (defmacro defn+
-     "CLJS really don’t like :declared metadata on vars (generates less
+     "CLJS really don't like :declared metadata on vars (generates less
       efficient code), but it needs it to skip warnings. So we redefine
       first with ^:declared and empty implementation, and then immediately
       redefine again without ^:declared. This way both `declare` and `defn+`
@@ -185,11 +184,11 @@
   (datom-get-idx [this])
   (datom-set-idx [this value]))
 
-(deftype Datom #?(:clj [^int e a v ^int tx ^:unsynchronized-mutable ^int idx ^:unsynchronized-mutable ^int _hash]
-                  :cljs [^number e a v ^number tx ^:mutable ^number idx ^:mutable ^number _hash])
+(deftype Datom #?(:clj [e a v tx added ^:unsynchronized-mutable ^int idx ^:unsynchronized-mutable ^int _hash]
+                  :cljs [e a v tx added ^:mutable ^number idx ^:mutable ^number _hash])
   IDatom
-  (datom-tx [d] (if (pos? tx) tx (- tx)))
-  (datom-added [d] (pos? tx))
+  (datom-tx [d] tx)
+  (datom-added [d] added)
   (datom-get-idx [_] idx)
   (datom-set-idx [_ value] (set! idx (int value)))
 
@@ -258,9 +257,9 @@
 #?(:cljs (goog/exportSymbol "dbval.db.Datom" Datom))
 
 (defn ^Datom datom
-  ([e a v] (Datom. e a v tx0 0 0))
-  ([e a v tx] (Datom. e a v tx 0 0))
-  ([e a v tx added] (Datom. e a v (if added tx (- tx)) 0 0)))
+  ([e a v] (Datom. e a v tx0 true 0 0))
+  ([e a v tx] (Datom. e a v tx true 0 0))
+  ([e a v tx added] (Datom. e a v tx (boolean added) 0 0)))
 
 (defn datom? [x] (instance? Datom x))
 
@@ -270,7 +269,7 @@
     (combine-hashes (hash (.-v d)))))
 
 (defn+ ^:private equiv-datom [^Datom d ^Datom o]
-  (and (== (.-e d) (.-e o))
+  (and (= (.-e d) (.-e o))
     (= (.-a d) (.-a o))
     (= (.-v d) (.-v o))))
 
@@ -1035,7 +1034,7 @@
           (remove [_]
             (throw (UnsupportedOperationException. "remove not supported"))))))))
 
-(defrecord-updatable DB [schema tuples max-eid max-tx rschema pull-patterns pull-attrs hash
+(defrecord-updatable DB [schema max-tx tuples rschema pull-patterns pull-attrs hash
                          #?@(:clj [db-file conn])]
   #?@(:cljs
       [IHash                (-hash  [db]        (hash-db db))
@@ -1090,8 +1089,8 @@
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
              (filter (fn [datom]
-                       (<= (:tx datom)
-                           (:max-tx db))))
+                       (uuid<= (:tx datom)
+                               (:max-tx db))))
              datoms-filter
              (filter (partial datom=
                               [e a v tx])))
@@ -1122,8 +1121,8 @@
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
                (filter (fn [datom]
-                         (<= (:tx datom)
-                             (:max-tx db))))
+                         (uuid<= (:tx datom)
+                                 (:max-tx db))))
                datoms-filter
                (filter (partial datom=
                                 [e a v tx])))
@@ -1152,8 +1151,8 @@
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
              (filter (fn [datom]
-                       (<= (:tx datom)
-                           (:max-tx db))))
+                       (uuid<= (:tx datom)
+                               (:max-tx db))))
              datoms-filter)
        (slice {:db db
                :begin begin
@@ -1181,8 +1180,8 @@
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
              (filter (fn [datom]
-                       (<= (:tx datom)
-                           (:max-tx db))))
+                       (uuid<= (:tx datom)
+                               (:max-tx db))))
              datoms-filter)
        (slice {:db db
                :begin begin
@@ -1408,15 +1407,15 @@
             (util/raise a " :db/tupleAttrs must be a sequential collection, got: " attrs ex-data))
 
           (when (empty? attrs)
-            (util/raise a " :db/tupleAttrs can’t be empty" ex-data))
+            (util/raise a " :db/tupleAttrs can't be empty" ex-data))
 
           (doseq [attr attrs
                   :let [ex-data (assoc ex-data :value attr)]]
             (when (contains? (get schema attr) :db/tupleAttrs)
-              (util/raise a " :db/tupleAttrs can’t depend on another tuple attribute: " attr ex-data))
+              (util/raise a " :db/tupleAttrs can't depend on another tuple attribute: " attr ex-data))
 
             (when (= :db.cardinality/many (:db/cardinality (get schema attr)))
-              (util/raise a " :db/tupleAttrs can’t depend on :db.cardinality/many attribute: " attr ex-data))))))))
+              (util/raise a " :db/tupleAttrs can't depend on :db.cardinality/many attribute: " attr ex-data))))))))
 
 (defn execute-sql!
   "Executes a single SQL statement using the given java.sql.Connection.
@@ -1447,35 +1446,13 @@
         _ (.commit conn)]
     (map->DB
      {:schema        schema
+      :max-tx        tx0
       :rschema       (rschema (merge implicit-schema schema))
       :db-file       db-file
       :conn          conn
-      :max-eid       e0
-      :max-tx        tx0
       :pull-patterns (lru/cache 100)
       :pull-attrs    (lru/cache 100)
       :hash          (atom 0)})))
-
-(defn- init-max-eid [rschema eavt avet]
-  (let [max     #(if (and %2 (> %2 %1)) %2 %1)
-        max-eid (some->
-                  (set/rslice eavt
-                    (datom (dec tx0) nil nil txmax)
-                    (datom e0 nil nil tx0))
-                  first :e)
-        res     (max e0 max-eid)
-        max-ref (fn [attr]
-                  (some->
-                    (set/rslice avet
-                      (datom (dec tx0) attr (dec tx0) txmax)
-                      (datom e0 attr e0 tx0))
-                    first :v))
-        refs    (:db.type/ref rschema)
-        res     (reduce
-                  (fn [res attr]
-                    (max res (max-ref attr)))
-                  res refs)]
-    res))
 
 (defrecord TxReport [db-before db-after tx-data tempids tx-meta])
 
@@ -1509,16 +1486,15 @@
     (db-transact db
                  (datoms->tx datoms))))
 
-(defn+ ^DB restore-db [{:keys [schema eavt aevt avet max-eid max-tx] :as keys}]
+(defn+ ^DB restore-db [{:keys [schema max-tx eavt aevt avet] :as keys}]
   (map->DB
     {:schema        schema
+     :max-tx        (or max-tx tx0)
      :rschema       (or (:rschema keys)
                       (rschema (merge implicit-schema schema)))
      :eavt          eavt
      :aevt          aevt
      :avet          avet
-     :max-eid       (or max-eid e0)
-     :max-tx        (or max-tx tx0)
      :pull-patterns (lru/cache 100)
      :pull-attrs    (lru/cache 100)
      :hash          (atom 0)}))
@@ -1742,46 +1718,53 @@
               (tuple-existing-entity db tuple components)))))
       tuples)))
 
-(defn+ ^number entid [db eid]
+(defn+ entid [db eid]
   {:pre [(db? db)]}
   (cond
-    (and (number? eid) (pos? eid))
-    (if (> eid emax)
-      (util/raise "Highest supported entity id is " emax ", got " eid {:error :entity-id :value eid})
-      eid)
-    
+    (uuid? eid)
+    eid
+
     (sequential? eid)
     (let [[attr value] eid]
       (cond
         (not= (count eid) 2)
         (util/raise "Lookup ref should contain 2 elements: " eid
           {:error :lookup-ref/syntax, :entity-id eid})
-        
+
         (not (is-attr? db attr :db/unique))
         (util/raise "Lookup ref attribute should be marked as :db/unique: " eid
           {:error :lookup-ref/unique, :entity-id eid})
-        
+
         (tuple? db attr)
         (let [value' (resolve-tuple-refs db attr value)]
           (-> (-datoms db :avet attr value' nil nil) first :e))
-        
+
         (nil? value)
         nil
-        
+
         :else
         (-> (-datoms db :avet attr value nil nil) first :e)))
-    
+
     #?@(:cljs [(array? eid) (recur db (array-seq eid))])
-    
+
     (keyword? eid)
     (-> (-datoms db :avet :db/ident eid nil nil) first :e)
 
+    ;; Legacy integer IDs - return nil (entity not found)
+    ;; since entities now use UUIDs. Tests can use lookup refs or
+    ;; look up the generated UUID via (:tempids tx-result).
+    (integer? eid)
+    nil
+
     :else
-    (util/raise "Expected number or lookup ref for entity id, got " eid
+    (util/raise "Expected UUID or lookup ref for entity id, got " eid
       {:error :entity-id/syntax, :entity-id eid})))
 
-(defn+ ^boolean numeric-eid-exists? [db eid]
+(defn+ ^boolean eid-exists? [db eid]
   (= eid (-> (-seek-datoms db :eavt eid nil nil nil) first :e)))
+
+;; Alias for backwards compatibility
+(def ^:no-doc numeric-eid-exists? eid-exists?)
 
 (defn+ ^number entid-strict [db eid]
   (or
@@ -1796,71 +1779,294 @@
 
 ;;;;;;;;;; Transacting
 
-(def *last-auto-tempid
-  (atom 0))
+(defn- legacy-tempid?
+  "Returns true if id is a legacy tempid format (negative integer or string)."
+  [id]
+  (or (and (integer? id) (neg? id))
+      (string? id)))
 
-(deftype AutoTempid [id]
-  #?@(:cljs
-      [IPrintWithWriter
-       (-pr-writer [d writer opts]
-         (pr-sequential-writer writer pr-writer "#dbval/AutoTempid [" " " "]" opts [id]))]
-      :clj
-      [Object
-       (toString [d]
-         (str "#dbval/AutoTempid [" id "]"))]))
+(defn- find-upsert-id
+  "Check if entity has unique identity attributes that resolve to an existing entity.
+   Only :db.unique/identity triggers upsert, not :db.unique/value."
+  [db entity]
+  (when (map? entity)
+    (some (fn [[a v]]
+            (when (and (keyword? a)
+                       (not= a :db/id)
+                       ;; Only identity attrs trigger upsert, not value attrs
+                       (is-attr? db a :db.unique/identity)
+                       (not (nil? v))
+                       ;; Skip ref attributes with tempid values - can't look up by unresolved tempid
+                       (not (and (ref? db a) (legacy-tempid? v))))
+              ;; Try to find existing entity with this unique value
+              (-> (-datoms db :avet a v nil nil) first :e)))
+          entity)))
 
-#?(:clj
-   (defmethod print-method AutoTempid [^AutoTempid id, ^java.io.Writer w]
-     (.write w (str "#dbval/AutoTempid "))
-     (binding [*out* w]
-       (pr [(.-id id)]))))
+(defn- find-vector-upserts
+  "For vector ops like [:db/add e a v], group by entity and check if their attrs
+   match unique identity values that already exist. Returns {:tempid->upsert map, :identity-value->uuid map}.
+   Handles both regular unique identity attrs and tuple attrs.
+   Throws on conflicting upserts (same tempid resolving to different entities)."
+  [db tx-data]
+  (let [;; Get all unique identity attrs (including tuples)
+        idents (-attrs-by db :db.unique/identity)
+        tuples (-attrs-by db :db.type/tuple)
+        refs (-attrs-by db :db.type/ref)
+        schema (-schema db)
+        ;; Group all :db/add vector ops by entity id, collecting ALL values for identity attrs
+        ;; For identity attrs, we keep a list of values; for others, just the last value
+        adds-by-entity (reduce
+                         (fn [acc entity]
+                           (if (and (sequential? entity)
+                                    (= :db/add (first entity)))
+                             (let [[_ e a v] entity]
+                               (if (legacy-tempid? e)
+                                 (if (contains? idents a)
+                                   ;; For identity attrs, collect all values as a list
+                                   (update-in acc [e a] (fnil conj []) v)
+                                   ;; For other attrs, just keep last value
+                                   (assoc-in acc [e a] v))
+                                 acc))
+                             acc))
+                         {}
+                         tx-data)
+        ;; Track within-transaction identity values -> first tempid's UUID
+        identity-value->uuid (atom {})
+        tempid->upsert (atom {})]
+    ;; Process each tempid's attrs
+    (doseq [[tempid attrs] adds-by-entity]
+      (when-not (contains? @tempid->upsert tempid)
+        ;; First check regular unique identity attrs for upserts
+        ;; Note: For non-ref attrs, string values are regular values, not tempids
+        ;; For ref attrs, skip tempid values (negative ints) as they can't be looked up
+        (let [found-upserts
+              ;; Collect ALL upserts for this tempid
+              (reduce-kv
+                (fn [upserts a v-or-vs]
+                  (if (and (contains? idents a)
+                           (not (contains? tuples a)))
+                    ;; v-or-vs is either a vector of values (for identity attrs) or a single value
+                    (let [values (if (vector? v-or-vs) v-or-vs [v-or-vs])]
+                      (reduce
+                        (fn [ups v]
+                          (if (and (some? v)
+                                   ;; For ref attrs, skip negative int tempids
+                                   (not (and (contains? refs a)
+                                             (and (integer? v) (neg? v)))))
+                            ;; Look up if this value exists in db
+                            (if-some [existing (:e (first (-datoms db :avet a v nil nil)))]
+                              (conj ups {:attr a :value v :eid existing})
+                              ups)
+                            ups))
+                        upserts
+                        values))
+                    upserts))
+                []
+                attrs)]
+          ;; Check for conflicting upserts (different existing entities)
+          (when (> (count found-upserts) 1)
+            (let [distinct-eids (set (map :eid found-upserts))]
+              (when (> (count distinct-eids) 1)
+                (util/raise "Conflicting upsert: " tempid " resolves both to "
+                            (first distinct-eids) " and " (second distinct-eids)
+                            {:error :transact/upsert
+                             :tempid tempid
+                             :upserts found-upserts}))))
+          (if (seq found-upserts)
+            (swap! tempid->upsert assoc tempid (:eid (first found-upserts)))
+            ;; Check tuple attrs
+            (let [tuple-upsert
+                  (some (fn [tuple-attr]
+                          (when (is-attr? db tuple-attr :db.unique/identity)
+                            (let [tuple-source-attrs (get-in schema [tuple-attr :db/tupleAttrs])
+                                  ;; Get first value for each tuple source attr
+                                  tuple-values (mapv #(let [v (get attrs %)]
+                                                        (if (vector? v) (first v) v))
+                                                     tuple-source-attrs)]
+                              ;; All source attrs must be present
+                              (when (every? some? tuple-values)
+                                ;; Look up if this tuple value exists
+                                (when-some [existing (:e (first (-datoms db :avet tuple-attr tuple-values nil nil)))]
+                                  existing)))))
+                        tuples)]
+              (if tuple-upsert
+                (swap! tempid->upsert assoc tempid tuple-upsert)
+                ;; No db upsert found - check within-transaction duplicates
+                (some (fn [[a v-or-vs]]
+                        (when (and (contains? idents a)
+                                   (not (contains? tuples a)))
+                          (let [v (if (vector? v-or-vs) (first v-or-vs) v-or-vs)]
+                            (when (some? v)
+                              (let [key [a v]]
+                                (if-let [existing-uuid (get @identity-value->uuid key)]
+                                  ;; Another tempid already claimed this value
+                                  (swap! tempid->upsert assoc tempid existing-uuid)
+                                  ;; First tempid with this value - generate UUID
+                                  (let [new-uuid (random-uuid)]
+                                    (swap! tempid->upsert assoc tempid new-uuid)
+                                    (swap! identity-value->uuid assoc key new-uuid))))))))
+                      attrs)))))))
+    {:tempid->upsert @tempid->upsert
+     :identity-value->uuid @identity-value->uuid}))
 
-(defn auto-tempid []
-  (AutoTempid. (swap! *last-auto-tempid inc)))
+(defn- assign-entity-ids
+  "Assigns random UUIDs to entities that don't have a :db/id.
+   Also converts legacy tempid formats (negative integers, strings) to UUIDs.
+   For entity maps, generates a new UUID if :db/id is missing.
+   For vector ops like [:db/add ...], the entity ID must be provided.
+   Returns {:tx-data processed-tx-data :id-map legacy-id->uuid-map}."
+  [db tx-data]
+  ;; First pass: find all upserts and map tempids to existing entity IDs
+  ;; Also detect within-transaction upserts (multiple entities with same unique identity value)
+  (let [{vector-upserts :tempid->upsert
+         vector-identity-values :identity-value->uuid} (find-vector-upserts db tx-data)
+        tempid->upsert (atom vector-upserts)
+        ;; Track unique identity values to UUIDs within this transaction
+        ;; {[attr value] -> uuid}
+        identity-value->uuid (atom vector-identity-values)
+        idents (-attrs-by db :db.unique/identity)
+        _ (doseq [entity tx-data]
+            (when (map? entity)
+              (let [old-id (:db/id entity)]
+                (when (and (legacy-tempid? old-id)
+                           (not (contains? @tempid->upsert old-id)))
+                  ;; Check if it upserts to an existing entity in db
+                  (if-let [upsert-id (find-upsert-id db entity)]
+                    (swap! tempid->upsert assoc old-id upsert-id)
+                    ;; Check if another entity in this transaction has the same unique identity value
+                    (some (fn [[a v]]
+                            (when (and (contains? idents a) (some? v))
+                              (let [key [a v]]
+                                (if-let [existing-uuid (get @identity-value->uuid key)]
+                                  ;; Another entity already claimed this value - map to it
+                                  (swap! tempid->upsert assoc old-id existing-uuid)
+                                  ;; First entity with this value - generate UUID and record it
+                                  (let [new-uuid (random-uuid)]
+                                    (swap! tempid->upsert assoc old-id new-uuid)
+                                    (swap! identity-value->uuid assoc key new-uuid))))))
+                          entity))))))
+        ;; Use an atom to track legacy-id -> UUID mappings within this transaction
+        id-map (atom {})]
+    (letfn [(resolve-id [id]
+              (cond
+                (uuid? id) id
+                (sequential? id) id  ;; lookup ref, keep as-is
+                (keyword? id) id     ;; :db/ident or :db/current-tx
+                ;; tx-id string aliases must pass through to be resolved later
+                (and (string? id) (or (= id "datomic.tx") (= id "dbval.tx"))) id
+                (legacy-tempid? id)
+                (or
+                  ;; Check if this tempid upserts to an existing entity
+                  (get @tempid->upsert id)
+                  ;; Otherwise use cached mapping or generate new UUID
+                  (if-let [uuid (get @id-map id)]
+                    uuid
+                    (let [uuid (random-uuid)]
+                      (swap! id-map assoc id uuid)
+                      uuid)))
+                (integer? id)
+                ;; Positive integer - treat as legacy entity ID, convert to UUID
+                (if-let [uuid (get @id-map id)]
+                  uuid
+                  (let [uuid (random-uuid)]
+                    (swap! id-map assoc id uuid)
+                    uuid))
+                :else id))
+            (process-entity [entity]
+              (util/cond+
+                (map? entity)
+                (let [old-id (:db/id entity)
+                      new-id (if (contains? entity :db/id)
+                               (resolve-id old-id)
+                               (random-uuid))]
+                  (reduce-kv
+                    (fn [entity a v]
+                      (cond
+                        (not (or (keyword? a) (string? a)))
+                        (assoc entity a v)
 
-(defn+ ^boolean auto-tempid? [x]
-  (instance? AutoTempid x))
+                        ;; Multi-value ref with collection of values (not a single lookup ref)
+                        (and (ref? db a) (multi-value? db a v) (not (keyword? (first v))))
+                        (assoc entity a
+                          (mapv (fn [elem]
+                                  (cond
+                                    (map? elem) (process-entity elem)
+                                    (or (uuid? elem) (sequential? elem) (keyword? elem)) elem
+                                    :else (resolve-id elem)))
+                                v))
 
-(defn assoc-auto-tempids [db tx-data]
-  (for [entity tx-data]
-    (util/cond+
-      (map? entity)
-      (reduce-kv
-        (fn [entity a v]
-          (cond
-            (not (or (keyword? a) (string? a)))
-            (assoc entity a v)
-             
-            (and (ref? db a) (multi-value? db a v))
-            (assoc entity a (assoc-auto-tempids db v))
-                
-            (ref? db a)
-            (assoc entity a (first (assoc-auto-tempids db [v])))
-             
-            (and (reverse-ref? a) (sequential? v))
-            (assoc entity a (assoc-auto-tempids db v))
-             
-            (reverse-ref? a)
-            (assoc entity a (first (assoc-auto-tempids db [v])))
-                
-            :else
-            (assoc entity a v)))
-        {}
-        (if (contains? entity :db/id)
-          entity
-          (assoc entity :db/id (auto-tempid))))
-       
-      (and
-        (sequential? entity)
-        :let [[op e a v] entity]
-        (= :db/add op)
-        (ref? db a))
-      (if (multi-value? db a v)
-        [op e a (assoc-auto-tempids db v)]
-        [op e a (first (assoc-auto-tempids db [v]))])
-        
-      :else
-      entity)))
+                        (ref? db a)
+                        (if (map? v)
+                          ;; Nested entity map - process it recursively
+                          (assoc entity a (process-entity v))
+                          ;; ID reference - resolve if needed
+                          (let [resolved (if (or (uuid? v) (sequential? v) (keyword? v))
+                                           v
+                                           (resolve-id v))]
+                            (assoc entity a resolved)))
+
+                        (and (reverse-ref? a) (sequential? v) (keyword? (first v)))
+                        ;; Lookup ref like [:name "Ivan"] - keep as-is
+                        (assoc entity a v)
+
+                        (and (reverse-ref? a) (sequential? v))
+                        ;; Collection of refs like ["tempid1" "tempid2"]
+                        (assoc entity a
+                          (mapv (fn [elem]
+                                  (cond
+                                    (map? elem) (process-entity elem)
+                                    (or (uuid? elem) (sequential? elem) (keyword? elem)) elem
+                                    :else (resolve-id elem)))
+                                v))
+
+                        (reverse-ref? a)
+                        (if (map? v)
+                          (assoc entity a (process-entity v))
+                          (assoc entity a (if (or (uuid? v) (sequential? v) (keyword? v))
+                                            v
+                                            (resolve-id v))))
+
+                        :else
+                        (assoc entity a v)))
+                    {:db/id new-id}
+                    (dissoc entity :db/id)))
+
+                ;; :db.fn/call entities pass through unchanged - they don't have normal entity IDs
+                (and (sequential? entity) (= :db.fn/call (first entity)))
+                entity
+
+                ;; :db.fn/cas and :db/cas have 5 elements - need to preserve all of them
+                (and (sequential? entity) (#{:db.fn/cas :db/cas} (first entity)))
+                (let [[op e a ov nv] entity]
+                  [op (resolve-id e) a ov nv])
+
+                (and
+                  (sequential? entity)
+                  :let [[op e a v] entity]
+                  (keyword? op))
+                (let [new-e (resolve-id e)]
+                  (cond
+                    ;; Multi-value ref with collection of values (not a single lookup ref)
+                    (and (= :db/add op) (ref? db a) (multi-value? db a v) (not (keyword? (first v))))
+                    [op new-e a (mapv #(cond
+                                         (map? %) (process-entity %)
+                                         (or (uuid? %) (sequential? %) (keyword? %)) %
+                                         :else (resolve-id %)) v)]
+
+                    (and (= :db/add op) (ref? db a) (map? v))
+                    [op new-e a (process-entity v)]
+
+                    (and (= :db/add op) (ref? db a))
+                    [op new-e a (if (or (uuid? v) (sequential? v) (keyword? v)) v (resolve-id v))]
+
+                    :else
+                    [op new-e a v]))
+
+                :else
+                entity))]
+      {:tx-data (mapv process-entity tx-data)
+       ;; Merge upsert mappings with new ID mappings
+       :id-map (merge @tempid->upsert @id-map)})))
 
 (defn validate-datom [db ^Datom datom]
   (when (and (datom-added datom)
@@ -1872,14 +2078,15 @@
          :datom datom}))))
 
 (defn- current-tx
-  #?(:clj {:inline (fn [report] `(-> ~report :db-before :max-tx long inc))})
-  ^long [report]
-  (-> report :db-before :max-tx long inc))
+  "Returns the transaction ID (squuid) for this transaction.
+   Generated once at transaction start and cached in ::tx-id."
+  [report]
+  (::tx-id report))
 
 (defn- next-eid
-  #?(:clj {:inline (fn [db] `(inc (long (:max-eid ~db))))})
-  ^long [db]
-  (inc (long (:max-eid db))))
+  "Generates a new random UUID for an entity."
+  [_db]
+  (random-uuid))
 
 #?(:clj
    (defn- ^Boolean tx-id?
@@ -1897,43 +2104,15 @@
        (= e "datomic.tx")
        (= e "dbval.tx"))))
 
-(defn- #?@(:clj  [^Boolean tempid?]
-           :cljs [^boolean tempid?])
-  [x]
-  (or
-    (and (number? x) (neg? x))
-    (string? x)
-    (auto-tempid? x)))
-
-(defn- new-eid? [db eid]
-  (and (> eid (:max-eid db))
-    (< eid tx0))) ;; tx0 is max eid
-
-(defn- advance-max-eid [db eid]
-  (cond-> db
-    (new-eid? db eid)
-    (assoc :max-eid eid)))
-
 (defn- allocate-eid
-  ([report eid]
-   (update report :db-after advance-max-eid eid))
+  "Simplified allocate-eid for UUID-based IDs.
+   Only tracks :db/current-tx in tempids map."
+  ([report _eid]
+   report)  ; No-op, UUIDs don't need tracking
   ([report e eid]
    (cond-> report
      (tx-id? e)
-     (->
-       (update :tempids assoc e eid)
-       (update ::reverse-tempids update eid util/conjs e))
-     
-     (tempid? e)
-     (->
-       (update :tempids assoc e eid)
-       (update ::reverse-tempids update eid util/conjs e))
-
-     (and (not (tempid? e)) (new-eid? (:db-after report) eid))
-     (update :tempids assoc eid eid)
-
-     true
-     (update :db-after advance-max-eid eid))))
+     (update :tempids assoc e eid))))
 
 ;; In context of `with-datom` we can use faster comparators which
 ;; do not check for nil (~10-15% performance gain in `transact`)
@@ -1985,7 +2164,6 @@
                  (set-add! stmt (datom-tuple db :aevt datom))
                  (cond-> indexing? (set-add! stmt (datom-tuple db :avet datom)))
                  (set-add! stmt (datom-tuple db :teav datom))
-                 (advance-max-eid (.-e datom))
                  (assoc :hash (atom 0)))
              (if-some [removing (some-> (fsearch db [(.-e datom) (.-a datom) (.-v datom)])
                                         (retract-datom (:tx datom)))]
@@ -2051,12 +2229,14 @@
   [db entity]
   (if-some [idents (not-empty (-attrs-by db :db.unique/identity))]
     (let [resolve (fn [a v]
-                    (cond
-                      (not (ref? db a))
-                      (:e (first (-datoms db :avet a v nil nil)))
-                      
-                      (not (tempid? v))
-                      (:e (first (-datoms db :avet a (entid db v) nil nil)))))
+                    ;; Resolve lookup refs in values (for refs and tuples)
+                    (let [v (cond
+                              (tuple? db a)
+                              (resolve-tuple-refs db a v)
+                              (ref? db a)
+                              (entid db v)
+                              :else v)]
+                      (:e (first (-datoms db :avet a v nil nil)))))
           split   (fn [a vs]
                     (reduce
                       (fn [acc v]
@@ -2104,9 +2284,9 @@
     [entity nil]))
 
 (defn validate-upserts
-  "Throws if not all upserts point to the same entity. 
+  "Throws if not all upserts point to the same entity.
    Returns single eid that all upserts point to, or null."
-  [entity upserts]
+  [db entity upserts]
   (let [upsert-ids (reduce-kv
                      (fn [m a v->e]
                        (reduce-kv
@@ -2126,8 +2306,11 @@
         (when (and
                 (some? upsert-id)
                 (some? eid)
-                (not (tempid? eid))
-                (not= upsert-id eid))
+                (not= upsert-id eid)
+                ;; Only error if eid is an existing entity in the database.
+                ;; If eid was assigned from a tempid and doesn't exist yet,
+                ;; the upsert takes precedence.
+                (some? (fsearch db [eid])))
           (util/raise "Conflicting upsert: " [a v] " resolves to " upsert-id ", but entity already has :db/id " eid
             {:error     :transact/upsert
              :assertion [upsert-id a v]
@@ -2232,23 +2415,6 @@
      [report]
      report))
 
-(defn- retry-with-tempid [initial-report report es tempid upserted-eid]
-  (if-some [eid (get (::upserted-tempids initial-report) tempid)]
-    (util/raise "Conflicting upsert: " tempid " resolves"
-      " both to " upserted-eid " and " eid
-      {:error :transact/upsert})
-    ;; try to re-run from the beginning
-    ;; but remembering that `tempid` will resolve to `upserted-eid`
-    (do
-      (rollback-report! report)
-      (let [tempids' (-> (:tempids report)
-                       (assoc tempid upserted-eid))
-            report'  (-> initial-report
-                       (assoc :tempids tempids')
-                       (update ::upserted-tempids assoc tempid upserted-eid))]
-        (util/log "retry" tempid "->" upserted-eid)
-        (transact-tx-data-impl report' es)))))
-
 (def builtin-fn?
   #{:db.fn/call
     :db.fn/cas
@@ -2277,26 +2443,12 @@
       (::queued-tuples report))))
 
 (defn check-value-tempids [report]
-  (if-let [tempids (::value-tempids report)]
-    (let [all-tempids (transient tempids)
-          reduce-fn   (fn [tempids datom]
-                        (if (datom-added datom)
-                          (dissoc! tempids (:e datom))
-                          tempids))
-          unused      (reduce reduce-fn all-tempids (:tx-data report))
-          unused      (reduce reduce-fn unused (::tx-redundant report))]
-      (if (zero? (count unused))
-        (dissoc report ::value-tempids ::tx-redundant)
-        (util/raise "Tempids used only as value in transaction: " (sort (vals (persistent! unused)))
-          {:error :transact/syntax, :tempids unused})))
-    (dissoc report ::value-tempids ::tx-redundant)))
+  ;; With UUID-based IDs, tempid tracking is no longer needed.
+  ;; Just clean up internal keys.
+  (dissoc report ::tx-redundant))
 
 (defn+ transact-tx-data-impl [initial-report initial-es]
-  (let [initial-report' (-> initial-report
-                            ;; the logic should be able to see intermediate
-                            ;; steps of the current transaction:
-                            (update :db-after update :max-tx inc)
-                            #_(update :db-after transient))
+  (let [initial-report' initial-report
         has-tuples?     (not (empty? (-attrs-by (:db-after initial-report) :db.type/tuple)))
         initial-es'     (if has-tuples?
                           (interleave initial-es (repeat ::flush-tuples))
@@ -2307,12 +2459,8 @@
       (util/cond+
         (empty? es)
         (-> report
-          (check-value-tempids)
-          (dissoc ::upserted-tempids)
-          (dissoc ::reverse-tempids)
-          (update :tempids #(util/removem auto-tempid? %))
-          (update :tempids assoc :db/current-tx (current-tx report))
-          #_(update :db-after persistent!))
+          (update :db-after assoc :max-tx (current-tx report))
+          (update :tempids assoc :db/current-tx (current-tx report)))
 
         :let [[entity & entities] es]
 
@@ -2340,7 +2488,22 @@
 
             ;; :db/current-tx / "datomic.tx" => tx
             (tx-id? old-eid)
-            (let [id (current-tx report)]
+            (let [id (current-tx report)
+                  ;; Check if any unique identity values would upsert to a different entity
+                  upsert-id (find-upsert-id db entity)]
+              (when (some? upsert-id)
+                (let [conflict-attr (some (fn [[a v]]
+                                            (when (and (keyword? a)
+                                                       (not= a :db/id)
+                                                       (is-attr? db a :db.unique/identity)
+                                                       (some? v))
+                                              [a v]))
+                                          entity)]
+                  (util/raise "Conflicting upsert: " conflict-attr " resolves to " upsert-id
+                              ", but entity already has :db/id " old-eid
+                              {:error :transact/upsert
+                               :assertion [upsert-id (first conflict-attr) (second conflict-attr)]
+                               :conflict {:db/id old-eid}})))
               (recur (allocate-eid report old-eid id)
                 (cons (assoc entity :db/id id) entities)))
            
@@ -2352,39 +2515,33 @@
            
             ;; upserted => explode | error
             :let [[entity' upserts] (resolve-upserts db entity)
-                  upserted-eid      (validate-upserts entity' upserts)]
+                  upserted-eid      (validate-upserts db entity' upserts)]
 
             (some? upserted-eid)
-            (if (and
-                  (tempid? old-eid)
-                  (contains? tempids old-eid)
-                  (not= upserted-eid (get tempids old-eid)))
-              (retry-with-tempid initial-report report initial-es old-eid upserted-eid)
-              (recur
-                (-> report
-                  (allocate-eid old-eid upserted-eid)
-                  (update ::tx-redundant util/conjv (datom upserted-eid nil nil tx0)))
-                (concat (explode db (assoc entity' :db/id upserted-eid)) entities)))
+            (recur
+              (-> report
+                (allocate-eid old-eid upserted-eid))
+              (concat (explode db (assoc entity' :db/id upserted-eid)) entities))
            
-            ;; resolved | allocated-tempid | tempid | nil => explode
+            ;; UUID or nil => explode
             (or
-              (number? old-eid)
-              (nil?    old-eid)
-              (string? old-eid)
-              (auto-tempid? old-eid))
+              (uuid? old-eid)
+              (nil? old-eid))
             (recur report (concat (explode db entity) entities))
            
             ;; trash => error
             :else
-            (util/raise "Expected number, string or lookup ref for :db/id, got " old-eid
+            (util/raise "Expected UUID or lookup ref for :db/id, got " old-eid
               {:error :entity-id/syntax, :entity entity})))
 
         (sequential? entity)
         (let [[op e a v] entity]
           (util/cond+
             (= op :db.fn/call)
-            (let [[_ f & args] entity]
-              (recur report (concat (assoc-auto-tempids db (apply f db args)) entities)))
+            (let [[_ f & args] entity
+                  fn-result (apply f db args)
+                  {:keys [tx-data id-map]} (assign-entity-ids db fn-result)]
+              (recur (update report :tempids merge id-map) (concat tx-data entities)))
             
             (and (keyword? op)
               (not (builtin-fn? op)))
@@ -2392,17 +2549,13 @@
               (let [fun  (:v (fsearch db [ident :db/fn]))
                     args (next entity)]
                 (if (fn? fun)
-                  (recur report (concat (apply fun db args) entities))
+                  (let [{:keys [tx-data id-map]} (assign-entity-ids db (apply fun db args))]
+                    (recur (update report :tempids merge id-map) (concat tx-data entities)))
                   (util/raise "Entity " op " expected to have :db/fn attribute with fn? value"
                     {:error :transact/syntax, :operation :db.fn/call, :tx-data entity})))
-              (util/raise "Can’t find entity for transaction fn " op
+              (util/raise "Can't find entity for transaction fn " op
                 {:error :transact/syntax, :operation :db.fn/call, :tx-data entity}))
             
-            (and (tempid? e)
-              (not= op :db/add))
-            (util/raise "Can't use tempid in '" entity "'. Tempids are allowed in :db/add only"
-              {:error :transact/syntax, :op entity})
-
             (or (= op :db.fn/cas)
               (= op :db/cas))
             (let [[_ e a ov nv] entity
@@ -2429,16 +2582,12 @@
             (and (ref? db a) (tx-id? v))
             (recur (allocate-eid report v (current-tx report)) (cons [op e a (current-tx report)] entities))
 
-            (and (ref? db a) (tempid? v))
-            (if-some [resolved (get tempids v)]
-              (let [report' (update report ::value-tempids assoc resolved v)]
-                (recur report' (cons [op e a resolved] entities)))
-              (let [resolved (next-eid db)
-                    report'  (-> report
-                               (allocate-eid v resolved)
-                               (update ::value-tempids assoc resolved v))]
-                (recur report' es)))
-            
+            ;; Resolve lookup refs in entity position for :db/add
+            ;; For retract ops, we use entid (not entid-strict) so missing refs become no-ops
+            (and (= op :db/add) (sequential? e) (keyword? (first e)))
+            (let [resolved-e (entid-strict db e)]
+              (recur report (cons [op resolved-e a v] entities)))
+
             (and
               (or (= op :db/add) (= op :db/retract))
               (not (::internal (meta entity)))
@@ -2447,30 +2596,18 @@
               (not= v v'))
             (recur report (cons [op e a v'] entities))
 
-            (tempid? e)
-            (let [upserted-eid  (or
-                                  (when (is-attr? db a :db.unique/identity)
-                                    (:e (first (-datoms db :avet a v nil nil))))
-                                  (tuple-upsert-eid db tempids e a v))
-                  allocated-eid (get tempids e)]
-              (if (and upserted-eid allocated-eid (not= upserted-eid allocated-eid))
-                (retry-with-tempid initial-report report initial-es e upserted-eid)
-                (let [eid (or upserted-eid allocated-eid (next-eid db))]
-                  (recur (allocate-eid report e eid) (cons [op eid a v] entities)))))
-
+            ;; Upsert check: when adding a unique identity value that already exists on another entity
+            ;; and the current entity doesn't exist yet, redirect to the existing entity
             (and
+              (= op :db/add)
               (is-attr? db a :db.unique/identity)
-              (contains? (::reverse-tempids report) e)
-              :let [upserted-eid (:e (first (-datoms db :avet a v nil nil)))]
-              e
-              upserted-eid
-              (not= e upserted-eid))
-            (let [tempids      (get (::reverse-tempids report) e)
-                  tempid       (util/find #(not (contains? (::upserted-tempids report) %)) tempids)]
-              (if tempid
-                (retry-with-tempid initial-report report initial-es tempid upserted-eid)
-                (util/raise "Conflicting upsert: " e " resolves to " upserted-eid " via " entity
-                  {:error :transact/upsert})))
+              :let [existing-eid (:e (first (-datoms db :avet a v nil nil)))]
+              existing-eid
+              (not= existing-eid e)
+              :let [e-exists? (seq (-search db [e]))]
+              (not e-exists?))
+            ;; Upsert: redirect this entity to the existing one
+            (recur (allocate-eid report e existing-eid) (cons [op existing-eid a v] entities))
             
             (and
               (not (::internal (meta entity)))
@@ -2484,7 +2621,7 @@
                       (every? some? queued-value)
                       (= v queued-value))
                   (recur report entities)
-                  (util/raise "Can’t modify tuple attrs directly: " entity
+                  (util/raise "Can't modify tuple attrs directly: " entity
                     {:error :transact/syntax, :tx-data entity}))
                 (let [component-values (tuple-component-values db e tuple-attrs)
                       prev-values      (when-some [db-before (:db-before report)]
@@ -2502,7 +2639,7 @@
                             (= tuple-value component-value))
                           (map vector v effective-values)))
                     (recur report entities)
-                    (util/raise "Can’t modify tuple attrs directly: " entity
+                    (util/raise "Can't modify tuple attrs directly: " entity
                       {:error :transact/syntax, :tx-data entity})))))
 
             (= op :db/add)
@@ -2577,13 +2714,22 @@
               (sequential? es))
     (util/raise "Bad transaction data " es ", expected sequential collection"
       {:error :transact/syntax, :tx-data es}))
-  (let [es' (assoc-auto-tempids (:db-before report) es)
-        conn ^java.sql.Connection (:conn (:db-after report))]
+  (let [tx-id (squuid/generate-squuid)
+        report' (-> report
+                    (assoc ::tx-id tx-id)
+                    ;; Set max-tx to current tx-id so datoms added during this
+                    ;; transaction are visible when searching for duplicates
+                    (update :db-after assoc :max-tx tx-id))
+        {:keys [tx-data id-map]} (assign-entity-ids (:db-before report') es)
+        ;; Pre-populate tempids with the legacy ID -> UUID mapping
+        report'' (update report' :tempids merge id-map)
+        conn ^java.sql.Connection (:conn (:db-after report''))]
     (try
       (let [result (with-transaction conn
-                     (transact-tx-data-impl report es'))]
+                     (transact-tx-data-impl report'' tx-data))]
         (.commit conn)
-        result)
+        ;; Add :tx field with the transaction UUID
+        (assoc result :tx tx-id))
       (catch Throwable t
         (try
           (.rollback conn)

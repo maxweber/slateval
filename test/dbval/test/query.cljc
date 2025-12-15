@@ -9,39 +9,44 @@
        [clojure.lang ExceptionInfo])))
 
 (deftest test-joins
-  (let [db (-> (d/empty-db)
-             (d/db-with [{:db/id 1, :name  "Ivan", :age   15}
-                         {:db/id 2, :name  "Petr", :age   37}
-                         {:db/id 3, :name  "Ivan", :age   37}
-                         {:db/id 4, :age 15}]))]
+  (let [tx (d/with (d/empty-db)
+             [{:db/id "e1", :name  "Ivan", :age   15}
+              {:db/id "e2", :name  "Petr", :age   37}
+              {:db/id "e3", :name  "Ivan", :age   37}
+              {:db/id "e4", :age 15}])
+        db (:db-after tx)
+        e1 (get (:tempids tx) "e1")
+        e2 (get (:tempids tx) "e2")
+        e3 (get (:tempids tx) "e3")]
     (is (= (d/q '[:find ?e
                   :where [?e :name]] db)
-          #{[1] [2] [3]}))
+          #{[e1] [e2] [e3]}))
     (is (= (d/q '[:find  ?e ?v
                   :where [?e :name "Ivan"]
                   [?e :age ?v]] db)
-          #{[1 15] [3 37]}))
+          #{[e1 15] [e3 37]}))
     (is (= (d/q '[:find  ?e1 ?e2
                   :where [?e1 :name ?n]
                   [?e2 :name ?n]] db)
-          #{[1 1] [2 2] [3 3] [1 3] [3 1]}))
+          #{[e1 e1] [e2 e2] [e3 e3] [e1 e3] [e3 e1]}))
     (is (= (d/q '[:find  ?e ?e2 ?n
                   :where [?e :name "Ivan"]
                   [?e :age ?a]
                   [?e2 :age ?a]
                   [?e2 :name ?n]] db)
-          #{[1 1 "Ivan"]
-            [3 3 "Ivan"]
-            [3 2 "Petr"]}))))
+          #{[e1 e1 "Ivan"]
+            [e3 e3 "Ivan"]
+            [e3 e2 "Petr"]}))))
 
 (deftest test-q-many
-  (let [db (-> (d/empty-db {:aka {:db/cardinality :db.cardinality/many}})
-             (d/db-with [[:db/add 1 :name "Ivan"]
-                         [:db/add 1 :aka  "ivolga"]
-                         [:db/add 1 :aka  "pi"]
-                         [:db/add 2 :name "Petr"]
-                         [:db/add 2 :aka  "porosenok"]
-                         [:db/add 2 :aka  "pi"]]))]
+  (let [tx (d/with (d/empty-db {:aka {:db/cardinality :db.cardinality/many}})
+             [[:db/add "e1" :name "Ivan"]
+              [:db/add "e1" :aka  "ivolga"]
+              [:db/add "e1" :aka  "pi"]
+              [:db/add "e2" :name "Petr"]
+              [:db/add "e2" :aka  "porosenok"]
+              [:db/add "e2" :aka  "pi"]])
+        db (:db-after tx)]
     (is (= (d/q '[:find  ?n1 ?n2
                   :where [?e1 :aka ?x]
                   [?e2 :aka ?x]
@@ -74,22 +79,26 @@
             #{[1 :age 39 999]})))))
 
 (deftest test-q-in
-  (let [db (-> (d/empty-db)
-             (d/db-with [{:db/id 1, :name  "Ivan", :age   15}
-                         {:db/id 2, :name  "Petr", :age   37}
-                         {:db/id 3, :name  "Ivan", :age   37}]))
+  (let [tx (d/with (d/empty-db)
+             [{:db/id "e1", :name  "Ivan", :age   15}
+              {:db/id "e2", :name  "Petr", :age   37}
+              {:db/id "e3", :name  "Ivan", :age   37}])
+        db (:db-after tx)
+        e1 (get (:tempids tx) "e1")
+        e2 (get (:tempids tx) "e2")
+        e3 (get (:tempids tx) "e3")
         query '{:find  [?e]
                 :in    [$ ?attr ?value]
                 :where [[?e ?attr ?value]]}]
     (is (= (d/q query db :name "Ivan")
-          #{[1] [3]}))
+          #{[e1] [e3]}))
     (is (= (d/q query db :age 37)
-          #{[2] [3]}))
+          #{[e2] [e3]}))
 
     (testing "Named DB"
       (is (= (d/q '[:find  ?a ?v
                     :in    $db ?e
-                    :where [$db ?e ?a ?v]] db 1)
+                    :where [$db ?e ?a ?v]] db e1)
             #{[:name "Ivan"]
               [:age 15]})))
 
@@ -101,9 +110,9 @@
                db
                [["Ivan" "ivan@mail.ru"]
                 ["Petr" "petr@gmail.com"]])
-            #{[1 "ivan@mail.ru"]
-              [2 "petr@gmail.com"]
-              [3 "ivan@mail.ru"]})))
+            #{[e1 "ivan@mail.ru"]
+              [e2 "petr@gmail.com"]
+              [e3 "ivan@mail.ru"]})))
     
     (testing "Query without DB"
       (is (= (d/q '[:find ?a ?b
@@ -124,10 +133,14 @@
           (d/q '[:find ?e :in $ $2 :where [?e]] db db db)))))
 
 (deftest test-bindings
-  (let [db (-> (d/empty-db)
-             (d/db-with [{:db/id 1, :name  "Ivan", :age   15}
-                         {:db/id 2, :name  "Petr", :age   37}
-                         {:db/id 3, :name  "Ivan", :age   37}]))]
+  (let [tx (d/with (d/empty-db)
+             [{:db/id "e1", :name  "Ivan", :age   15}
+              {:db/id "e2", :name  "Petr", :age   37}
+              {:db/id "e3", :name  "Ivan", :age   37}])
+        db (:db-after tx)
+        e1 (get (:tempids tx) "e1")
+        e2 (get (:tempids tx) "e2")
+        e3 (get (:tempids tx) "e3")]
     (testing "Relation binding"
       (is (= (d/q '[:find  ?e ?email
                     :in    $ [[?n ?email]]
@@ -135,9 +148,9 @@
                db
                [["Ivan" "ivan@mail.ru"]
                 ["Petr" "petr@gmail.com"]])
-            #{[1 "ivan@mail.ru"]
-              [2 "petr@gmail.com"]
-              [3 "ivan@mail.ru"]})))
+            #{[e1 "ivan@mail.ru"]
+              [e2 "petr@gmail.com"]
+              [e3 "ivan@mail.ru"]})))
 
     (testing "Tuple binding"
       (is (= (d/q '[:find  ?e
@@ -145,13 +158,13 @@
                     :where [?e :name ?name]
                     [?e :age ?age]]
                db ["Ivan" 37])
-            #{[3]})))
+            #{[e3]})))
 
     (testing "Collection binding"
       (is (= (d/q '[:find  ?attr ?value
                     :in    $ ?e [?attr ...]
                     :where [?e ?attr ?value]]
-               db 1 [:name :age])
+               db e1 [:name :age])
             #{[:name "Ivan"] [:age 15]})))
 
     (testing "Empty coll handling"
@@ -250,10 +263,12 @@
             :where [?e :s b]]
           '[[1 :s a]
             [2 :s b]])))
-  (let [db (-> (d/empty-db)
-             (d/db-with '[{:db/id 1, :s a}
-                          {:db/id 2, :s b}]))]
-    (is (= [2]
+  (let [tx (d/with (d/empty-db)
+             '[{:db/id "e1", :s a}
+               {:db/id "e2", :s b}])
+        db (:db-after tx)
+        e2 (get (:tempids tx) "e2")]
+    (is (= [e2]
           (d/q
             '[:find [?e ...]
               :where [?e :s b]]
@@ -271,18 +286,20 @@
         schema {:a {:db/index true}
                 :b {:db/index true}
                 :c {:db/index true}}
-        db     (-> (d/empty-db schema)
-                 (d/db-with
-                   (for [eid  (range 1 11)
-                         attr [:a :b :c]]
-                     [:db/add eid attr (str eid (name attr))])))]
-    (is (= [1 #{["5b"]}] (cnt+q '[:find ?v :where [5 :b ?v]] db)))
-    (is (= [1 #{[:b]}]   (cnt+q '[:find ?a :where [5 ?a "5b"]] db)))
-    (is (= [1 #{[5]}]    (cnt+q '[:find ?e :where [?e :b "5b"]] db)))
-    (is (= [1 #{[5 :b "5b"]}] (cnt+q '[:find ?e ?a ?v :in $ ?e ?a :where [?e ?a ?v]] db 5 :b)))
-    (is (= [2 #{[5 :b "5b"]}] (cnt+q '[:find ?e2 ?a ?v :in $ ?a ?v :where [?e ?a ?v] [?e2 ?a ?v]] db :b "5b")))
-    (is (= [3 #{[:a "5a"] [:b "5b"] [:c "5c"]}] (cnt+q '[:find ?a ?v :in $ ?e :where [?e ?a ?v]] db 5)))
-    (is (= [1 #{[5 :b]}] (cnt+q '[:find ?e ?a :where [?e ?a "5b"]] db)))
-    (is (= [1 #{[5 :b]}] (cnt+q '[:find ?e ?a :in $ ?v :where [?e ?a ?v]] db "5b")))
-    (is (= [1 #{[5 :b]}] (cnt+q '[:find ?e ?a :in $ [?v ...] :where [?e ?a ?v]] db ["5b"])))
-    (is (= [1 #{[5 :b]}] (cnt+q '[:find ?e ?a :where [(ground "5b") ?v] [?e ?a ?v]] db)))))
+        ;; Create 10 entities with string tempids
+        tx     (d/with (d/empty-db schema)
+                 (for [n (range 1 11)
+                       attr [:a :b :c]]
+                   [:db/add (str "e" n) attr (str n (name attr))]))
+        db     (:db-after tx)
+        e5     (get (:tempids tx) "e5")]
+    (is (= [1 #{["5b"]}] (cnt+q '[:find ?v :in $ ?eid :where [?eid :b ?v]] db e5)))
+    (is (= [1 #{[:b]}]   (cnt+q '[:find ?a :in $ ?eid :where [?eid ?a "5b"]] db e5)))
+    (is (= [1 #{[e5]}]   (cnt+q '[:find ?e :where [?e :b "5b"]] db)))
+    (is (= [1 #{[e5 :b "5b"]}] (cnt+q '[:find ?e ?a ?v :in $ ?e ?a :where [?e ?a ?v]] db e5 :b)))
+    (is (= [2 #{[e5 :b "5b"]}] (cnt+q '[:find ?e2 ?a ?v :in $ ?a ?v :where [?e ?a ?v] [?e2 ?a ?v]] db :b "5b")))
+    (is (= [3 #{[:a "5a"] [:b "5b"] [:c "5c"]}] (cnt+q '[:find ?a ?v :in $ ?e :where [?e ?a ?v]] db e5)))
+    (is (= [1 #{[e5 :b]}] (cnt+q '[:find ?e ?a :where [?e ?a "5b"]] db)))
+    (is (= [1 #{[e5 :b]}] (cnt+q '[:find ?e ?a :in $ ?v :where [?e ?a ?v]] db "5b")))
+    (is (= [1 #{[e5 :b]}] (cnt+q '[:find ?e ?a :in $ [?v ...] :where [?e ?a ?v]] db ["5b"])))
+    (is (= [1 #{[e5 :b]}] (cnt+q '[:find ?e ?a :where [(ground "5b") ?v] [?e ?a ?v]] db)))))

@@ -6,7 +6,8 @@
 (declare entity ->Entity equiv-entity lookup-entity touch hash-entity)
 
 (defn- entid [db eid]
-  (when (or (number? eid)
+  (when (or (uuid? eid)
+          (number? eid)
           (sequential? eid)
           (keyword? eid))
     (db/entid db eid)))
@@ -14,7 +15,7 @@
 (defn entity [db eid]
   {:pre [(db/db? db)]}
   (when-let [e (entid db eid)]
-    (when (db/numeric-eid-exists? db e)
+    (when (db/eid-exists? db e)
       (->Entity db e (volatile! false) (volatile! {})))))
 
 (defn- entity-attr [db a datoms]

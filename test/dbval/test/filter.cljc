@@ -6,32 +6,38 @@
     [dbval.test.core :as tdc]))
 
 (deftest test-filter-db
-  (let [empty-db* (fn [] (d/empty-db {:aka {:db/cardinality :db.cardinality/many}}))
+  (let [schema {:name {:db/unique :db.unique/identity}
+                :aka {:db/cardinality :db.cardinality/many}}
+        empty-db* (fn [] (d/empty-db schema))
         empty-db (empty-db*)
-        db* (fn []
-              (-> (empty-db*)
-                  (d/db-with [{:db/id 1
+        make-db (fn []
+                  (let [tx (d/with (empty-db*)
+                             [{:db/id "petr"
                                :name  "Petr"
                                :email "petya@spb.ru"
                                :aka   ["I" "Great"]
                                :password "<SECRET>"}
-                              {:db/id 2
+                              {:db/id "ivan"
                                :name  "Ivan"
                                :aka   ["Terrible" "IV"]
                                :password "<PROTECTED>"}
-                              {:db/id 3
+                              {:db/id "nikolai"
                                :name  "Nikolai"
                                :aka   ["II"]
-                               :password "<UNKWOWN>"}])))
-        db (db*)
+                               :password "<UNKWOWN>"}])]
+                    {:db (:db-after tx)
+                     :petr (get (:tempids tx) "petr")
+                     :ivan (get (:tempids tx) "ivan")
+                     :nikolai (get (:tempids tx) "nikolai")}))
+        {:keys [db petr ivan nikolai]} (make-db)
         remove-pass (fn [_ datom] (not= :password (:a datom)))
-        remove-ivan (fn [_ datom] (not= 2 (:e datom)))
+        remove-ivan (fn [_ datom] (not= ivan (:e datom)))
         long-akas   (fn [udb datom] (or (not= :aka (:a datom))
                                       ;; has just 1 aka
                                       (<= (count (:aka (d/entity udb (:e datom)))) 1)
                                       ;; or aka longer that 4 chars
                                       (>= (count (:v datom)) 4)))]
-    
+
     (are [_db _res] (= (d/q '[:find ?v :where [_ :password ?v]] _db) _res)
       db                        #{["<SECRET>"] ["<PROTECTED>"] ["<UNKWOWN>"]}
       (d/filter db remove-pass) #{}
@@ -45,34 +51,36 @@
       (d/filter db long-akas)   #{["Great"] ["Terrible"] ["II"]}
       (-> db (d/filter remove-ivan) (d/filter long-akas)) #{["Great"] ["II"]}
       (-> db (d/filter long-akas) (d/filter remove-ivan)) #{["Great"] ["II"]})
-     
+
     (testing "Entities"
-      (is (= (:password (d/entity db 1)) "<SECRET>"))
-      (is (= (:password (d/entity (d/filter db remove-pass) 1) ::not-found) ::not-found))
-      (is (= (:aka (d/entity db 2)) #{"Terrible" "IV"}))
-      (is (= (:aka (d/entity (d/filter db long-akas) 2)) #{"Terrible"})))
-    
+      (is (= (:password (d/entity db petr)) "<SECRET>"))
+      (is (= (:password (d/entity (d/filter db remove-pass) petr) ::not-found) ::not-found))
+      (is (= (:aka (d/entity db ivan)) #{"Terrible" "IV"}))
+      (is (= (:aka (d/entity (d/filter db long-akas) ivan)) #{"Terrible"})))
+
     (testing "Index access"
-      (is (= (map :v (d/datoms db :aevt :password))
-            ["<SECRET>" "<PROTECTED>" "<UNKWOWN>"]))
+      ;; With UUID-based entity IDs, order in AEVT index is not predictable, so use sets
+      (is (= (set (map :v (d/datoms db :aevt :password)))
+            #{"<SECRET>" "<PROTECTED>" "<UNKWOWN>"}))
       (is (= (map :v (d/datoms (d/filter db remove-pass) :aevt :password))
             [])))
-    
+
     (testing "hash"
-      (is (= (hash (d/db-with (db*) [[:db.fn/retractEntity 2]]))
+      (is (= (hash (d/db-with db [[:db.fn/retractEntity ivan]]))
             (hash (d/filter db remove-ivan))))
       (is (= (hash empty-db)
             (hash (d/filter empty-db (constantly true)))
             (hash (d/filter db (constantly false)))))))
-  
+
   (testing "double filtering"
-    (let [db       (d/db-with (d/empty-db {})
-                     [{:db/id 1, :name "Petr", :age 32}
-                      {:db/id 2, :name "Oleg"}
-                      {:db/id 3, :name "Ivan", :age 12}])
+    (let [tx       (d/with (d/empty-db {:name {:db/unique :db.unique/identity}})
+                     [{:db/id "petr", :name "Petr", :age 32}
+                      {:db/id "oleg", :name "Oleg"}
+                      {:db/id "ivan", :name "Ivan", :age 12}])
+          db       (:db-after tx)
           has-age? (fn [db datom] (some? (:age (d/entity db (:e datom)))))
           adult?   (fn [db datom] (>= (:age (d/entity db (:e datom))) 18))
           names    (fn [db] (map :v (d/datoms db :aevt :name)))]
-      (is (= ["Petr" "Oleg" "Ivan"] (names db)))
-      (is (= ["Petr" "Ivan"]        (names (-> db (d/filter has-age?)))))
-      (is (= ["Petr"]               (names (-> db (d/filter has-age?) (d/filter adult?))))))))
+      (is (= ["Ivan" "Oleg" "Petr"] (sort (names db))))
+      (is (= ["Ivan" "Petr"]        (sort (names (-> db (d/filter has-age?))))))
+      (is (= ["Petr"]               (sort (names (-> db (d/filter has-age?) (d/filter adult?)))))))))

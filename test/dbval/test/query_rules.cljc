@@ -175,16 +175,19 @@
 
 ;; issue-218
 (deftest test-false-arguments
-  (let [db    (d/db-with (d/empty-db) 
-                [[:db/add 1 :attr true]
-                 [:db/add 2 :attr false]])
+  (let [tx    (d/with (d/empty-db)
+                [[:db/add "e1" :attr true]
+                 [:db/add "e2" :attr false]])
+        db    (:db-after tx)
+        e1-id (get (:tempids tx) "e1")
+        e2-id (get (:tempids tx) "e2")
         rules '[[(is ?id ?val)
                  [?id :attr ?val]]]]
-    (is (= #{[1]}
+    (is (= #{[e1-id]}
           (d/q '[:find ?id :in $ %
                  :where (is ?id true)]
             db rules)))
-    (is (= #{[2]}
+    (is (= #{[e2-id]}
           (d/q '[:find ?id :in $ %
                  :where (is ?id false)]
             db rules)))))
