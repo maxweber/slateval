@@ -5,6 +5,7 @@
     [clojure.data]
     [clojure.edn :as edn]
     [clojure.string :as str]
+    [clojure.java.io :as io]
     #?(:clj [dbval.inline :refer [update]])
     [dbval.lru :as lru]
     [dbval.util :as util]
@@ -1019,11 +1020,10 @@
                            (do (reset! next-val nil) (close!) false))))]
 
         (reify java.util.Iterator
-          (hasNext [_]
+          (hasNext [this]
             (or @advanced
-                (let [ok (advance!)]
-                  (reset! advanced ok)
-                  ok)))
+                (reset! advanced
+                        (boolean (advance!)))))
           (next [_]
             (let [ok (or @advanced (advance!))]
               (when-not ok
@@ -1073,7 +1073,6 @@
           pred       #?(:clj  (vpred v)
                         :cljs #(= v %))
           multival?  (contains? (-attrs-by db :db.cardinality/many) a)
-          tuples ^java.util.NavigableSet (.-tuples db)
           index (pattern->order db
                                 pattern)
           [begin end] (apply tuple-range
@@ -1138,7 +1137,6 @@
                       index
                       [c0 c1 c2 c3])
           [e a v tx] (resolve-datom* db e a v tx)
-          tuples ^java.util.NavigableSet (.-tuples db)
           [begin _end] (apply tuple-range
                               (name index)
                               (take-while
@@ -1167,7 +1165,6 @@
                       index
                       [c0 c1 c2 c3])
           [e a v tx] (resolve-datom* db e a v tx)
-          tuples ^java.util.NavigableSet (.-tuples db)
           start (take-while
                  some?
                  (rest
@@ -1195,8 +1192,7 @@
   (-index-range [db attr start end]
     (validate-indexed db :avet attr nil nil nil)
     (validate-attr attr (list '-index-range 'db attr start end))
-    (let [tuples ^java.util.NavigableSet (.-tuples db)
-          [_ _ start*] (resolve-datom* db nil attr start nil)
+    (let [[_ _ start*] (resolve-datom* db nil attr start nil)
           [begin _end] (apply tuple-range
                               "avet"
                               (pr-str attr)
@@ -1444,6 +1440,7 @@
                     (.getCanonicalPath
                      (java.io.File/createTempFile (str (random-uuid))
                                                   ".db")))
+        _ (io/make-parents db-file)
         ;; TODO: consider how to close the connection:
         conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})
         _ (create-table! conn)
@@ -1453,8 +1450,6 @@
       :rschema       (rschema (merge implicit-schema schema))
       :db-file       db-file
       :conn          conn
-      :tuples        (java.util.TreeSet.
-                      ^java.util.Comparator byte-array-comparator)
       :max-eid       e0
       :max-tx        tx0
       :pull-patterns (lru/cache 100)
@@ -1966,17 +1961,15 @@
 
 (defn q-max-tx
   [db]
-  (let [tuples ^java.util.NavigableSet (:tuples db)
-        [begin end] (tuple-range "teav")]
-    (or (some->
-         (.subSet (.descendingSet tuples)
-                  end
-                  true
-                  begin
-                  true)
-         (first)
-         (tuple-from-bytes)
-         (second))
+  (let [[begin end] (tuple-range "teav")
+        iterator (slice {:db db
+                         :begin begin
+                         :end end
+                         :reverse true})]
+    (or (some-> iterator
+                (first)
+                (tuple-from-bytes)
+                (second))
         tx0)))
 
 (defn with-datom [db ^Datom datom]
