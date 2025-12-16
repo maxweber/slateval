@@ -2137,6 +2137,22 @@
                       e))))
   db)
 
+(defn all-tuples
+  "Returns a reducible of all tuples stored in the dbval table.
+   Each tuple is decoded from its byte representation.
+   Useful for debugging and inspecting the raw storage.
+   Example: (into [] (take 10) (all-tuples db))"
+  [db]
+  (reify clojure.lang.IReduceInit
+    (reduce [_ rf init]
+      (let [conn ^java.sql.Connection (:conn db)]
+        (with-open [stmt (.prepareStatement conn "SELECT k FROM dbval ORDER BY k")
+                    rs (.executeQuery stmt)]
+          (loop [state init]
+            (if (or (reduced? state) (not (.next rs)))
+              (unreduced state)
+              (recur (rf state (vec (tuple-from-bytes (.getBytes rs "k"))))))))))))
+
 (defn with-datom [db ^Datom datom]
   (validate-datom db datom)
   (let [conn ^java.sql.Connection (:conn db)
