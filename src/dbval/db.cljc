@@ -1431,6 +1431,18 @@
   ;; Create a table
   (execute-sql! conn "create table if not exists dbval (k blob not null, primary key(k)) WITHOUT ROWID;"))
 
+(defn q-max-tx
+  [db]
+  (let [[begin end] (tuple-range "teav")
+        iterator (slice {:db db
+                         :begin begin
+                         :end end
+                         :reverse true})]
+    (or (some-> iterator
+                (first)
+                (tuple-from-bytes)
+                (second))
+        tx0)))
   
 (defn ^DB empty-db [schema opts]
   {:pre [(or (nil? schema) (map? schema))]}
@@ -1443,16 +1455,19 @@
         ;; TODO: consider how to close the connection:
         conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})
         _ (create-table! conn)
-        _ (.commit conn)]
-    (map->DB
-     {:schema        schema
-      :max-tx        tx0
-      :rschema       (rschema (merge implicit-schema schema))
-      :db-file       db-file
-      :conn          conn
-      :pull-patterns (lru/cache 100)
-      :pull-attrs    (lru/cache 100)
-      :hash          (atom 0)})))
+        _ (.commit conn)
+        db (map->DB
+            {:schema        schema
+             :max-tx        tx0
+             :rschema       (rschema (merge implicit-schema schema))
+             :db-file       db-file
+             :conn          conn
+             :pull-patterns (lru/cache 100)
+             :pull-attrs    (lru/cache 100)
+             :hash          (atom 0)})]
+    (assoc db
+           :max-tx
+           (q-max-tx db))))
 
 (defrecord TxReport [db-before db-after tx-data tempids tx-meta])
 
@@ -2121,19 +2136,6 @@
                       {:tuple tuple}
                       e))))
   db)
-
-(defn q-max-tx
-  [db]
-  (let [[begin end] (tuple-range "teav")
-        iterator (slice {:db db
-                         :begin begin
-                         :end end
-                         :reverse true})]
-    (or (some-> iterator
-                (first)
-                (tuple-from-bytes)
-                (second))
-        tx0)))
 
 (defn with-datom [db ^Datom datom]
   (validate-datom db datom)
