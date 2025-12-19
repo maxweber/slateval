@@ -146,6 +146,16 @@ and to assign data to the transaction entity:
    [:db/add :db/current-tx :tx/source :api]])
 ```
 
+Another compelling option of using UUIDs is that dbval databases become
+mergeable, if they adhere to the same schema. Thereby you can solve the
+following challenge: if you have a separate database per customer it is no
+longer possible to run database queries to get statistics across your customer
+base. With dbval you can merge all customer databases into a big one to run
+these statistics queries.
+
+One obvious downside of UUIDs is that they need twice as much storage in
+comparison to 64 bit integers.
+
 ## Quickstart
 
 At the moment the project is a proof-of-concept and not meant to be used in
@@ -175,5 +185,3 @@ point is to run the unit tests via:
 
 - Build an example application app with dbval + Sqlite as a database to check if
   something is missing.
-
-- Maybe: [UUIDs for entity IDs](https://tonsky.me/blog/datascript-2/)
