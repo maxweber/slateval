@@ -104,6 +104,48 @@ database library and only tries to marry Datascript with Sqlite. Most
 database-related features are already solved by Sqlite or its
 [ecosystem](https://litestream.io/).
 
+As Datascript's creator Nikita Prokopov states in his blog post [Ideas for
+DataScript 2](https://tonsky.me/blog/datascript-2/):
+
+> UUIDs for entity IDs makes it easier to generate new IDs in distributed
+> environment without consulting central authority.
+
+dbval uses UUIDs for entity IDs. The biggest motivator is to avoid the need to
+assign an external ID to each entity. In past we often made the mistake to share
+Datomic entity IDs with the outside world (via an API for example), while this
+is strictly discouraged. In Datomic and Datascript each transaction also receive
+its own entity ID. dbval uses
+[colossal-squuid](https://github.com/yetanalytics/colossal-squuid) UUIDs for
+transaction entity IDs. They increase strictly monotonically, meaning:
+
+> A SQUUID generated later will always have a higher value, both
+> lexicographically and in terms of the underlying bits, than one generated
+> earlier.
+
+With `com.yetanalytics.squuid/uuid->time` you can extract the timestamp that is
+encoded in the leading bits of the SQUUID:
+
+```clojure
+
+(uuid->time #uuid "017de28f-5801-8fff-8fff-ffffffffffff")
+;; => #inst "2021-12-22T14:33:04.769000000-00:00"
+
+```
+
+This timestamp can serve as `:db/txInstant` to capture when the transaction has
+been transacted. UUIDs for entity and transaction IDs would allow to entirely
+get rid of tempids. However, they are still supported by dbval for convenience
+and to assign data to the transaction entity:
+
+``` clojure
+(d/transact! conn
+  [[:db/add "e1" :name "Alice"]
+
+   ;; attach metadata to the transaction
+   [:db/add :db/current-tx :tx/user-id 42]
+   [:db/add :db/current-tx :tx/source :api]])
+```
+
 ## Quickstart
 
 At the moment the project is a proof-of-concept and not meant to be used in
