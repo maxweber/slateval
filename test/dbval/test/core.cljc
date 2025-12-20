@@ -100,11 +100,12 @@
 (deftest test-protocols
   (let [schema {:aka {:db/cardinality :db.cardinality/many}
                 :name {:db/unique :db.unique/identity}}
-        db (d/db-with (d/empty-db schema)
-             [{:name "Ivan" :aka ["IV" "Terrible"]}
-              {:name "Petr" :age 37 :huh? false}])
-        ivan-id (:e (first (d/datoms db :avet :name "Ivan")))
-        petr-id (:e (first (d/datoms db :avet :name "Petr")))]
+        tx (d/with (d/empty-db schema)
+             [{:db/id "ivan" :name "Ivan" :aka ["IV" "Terrible"]}
+              {:db/id "petr" :name "Petr" :age 37 :huh? false}])
+        db (:db-after tx)
+        ivan-id (get (:tempids tx) "ivan")
+        petr-id (get (:tempids tx) "petr")]
     (is (= #{:schema :max-tx :rschema :pull-patterns :pull-attrs :hash :db-file :conn}
           (set (keys db))))
     (is (map? db))
