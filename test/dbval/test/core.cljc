@@ -105,7 +105,7 @@
               {:name "Petr" :age 37 :huh? false}])
         ivan-id (:e (first (d/datoms db :avet :name "Ivan")))
         petr-id (:e (first (d/datoms db :avet :name "Petr")))]
-    (is (= #{:schema :max-tx :rschema :pull-patterns :pull-attrs :hash :db-file :conn :tuples}
+    (is (= #{:schema :max-tx :rschema :pull-patterns :pull-attrs :hash :db-file :conn}
           (set (keys db))))
     (is (map? db))
     (is (seqable? (:eavt db)))

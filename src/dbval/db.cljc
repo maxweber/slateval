@@ -1034,7 +1034,7 @@
           (remove [_]
             (throw (UnsupportedOperationException. "remove not supported"))))))))
 
-(defrecord-updatable DB [schema max-tx tuples rschema pull-patterns pull-attrs hash
+(defrecord-updatable DB [schema max-tx rschema pull-patterns pull-attrs hash
                          #?@(:clj [db-file conn])]
   #?@(:cljs
       [IHash                (-hash  [db]        (hash-db db))
