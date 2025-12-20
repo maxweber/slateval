@@ -578,10 +578,9 @@
      x)))
 
 (defn resolve-tempid
-  "Does a lookup in tempids map, returning an entity id that a legacy tempid was resolved to.
+  "Does a lookup in tempids map, returning the UUID that was assigned to a tempid.
 
-   With UUID-based IDs, this looks up the mapping from legacy IDs (negative integers, strings)
-   to UUIDs that were assigned during transaction processing."
+   Exists for Datomic API compatibility. Prefer using map lookup directly if possible."
   [_db tempids tempid]
   (get tempids tempid))
 
