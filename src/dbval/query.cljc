@@ -280,7 +280,7 @@
                                 (aget ^objects tuple idx)
                                 (nth tuple idx)))]
               (cond
-                (number? eid)     eid ;; quick path to avoid fn call
+                (uuid? eid)       eid ;; quick path to avoid fn call
                 (sequential? eid) (db/entid *implicit-source* eid)
                 (da/array? eid)   (db/entid *implicit-source* eid)
                 :else             eid))))
@@ -289,7 +289,7 @@
           (let [eid #?(:cljs (da/aget tuple idx)
                        :clj (.valAt ^ILookup tuple idx))]
             (cond
-              (number? eid)     eid ;; quick path to avoid fn call
+              (uuid? eid)       eid ;; quick path to avoid fn call
               (sequential? eid) (db/entid *implicit-source* eid)
               (da/array? eid)   (db/entid *implicit-source* eid)
               :else             eid))))
