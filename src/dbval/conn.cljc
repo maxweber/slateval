@@ -23,11 +23,14 @@
   ([db tx-data] (with db tx-data nil))
   ([db tx-data tx-meta]
    {:pre [(db/db? db)]}
-   (let [q-max-tx (db/q-max-tx db)]
-     (when-not (<= q-max-tx
-                   (:max-tx db))
+   (let [q-max-tx (db/q-max-tx db)
+         max-tx   (:max-tx db)]
+     ;; Check that the storage hasn't been modified since this db snapshot was created.
+     ;; q-max-tx is the latest tx in storage, max-tx is what this snapshot sees.
+     ;; If q-max-tx > max-tx, storage has been modified.
+     (when (pos? (compare q-max-tx max-tx))
        (throw (ex-info "underlying tuple store has already been modified"
-                       {:max-tx (:max-tx db)
+                       {:max-tx max-tx
                         :q-max-tx q-max-tx}))))
    (if (instance? FilteredDB db)
      (throw (ex-info "Filtered DB cannot be modified" {:error :transaction/filtered}))

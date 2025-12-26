@@ -8,12 +8,12 @@
 (def *test-db
   (delay
     (d/db-with (d/empty-db)
-      [[:db/add 1 :name "Petr"]
-       [:db/add 1 :age 44]
-       [:db/add 2 :name "Ivan"]
-       [:db/add 2 :age 25]
-       [:db/add 3 :name "Sergey"]
-       [:db/add 3 :age 11]])))
+      [[:db/add "e1" :name "Petr"]
+       [:db/add "e1" :age 44]
+       [:db/add "e2" :name "Ivan"]
+       [:db/add "e2" :age 25]
+       [:db/add "e3" :name "Sergey"]
+       [:db/add "e3" :age 11]])))
 
 (deftest test-find-specs
   (is (= (d/q '[:find ?name ?age

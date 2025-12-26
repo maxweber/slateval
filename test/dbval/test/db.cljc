@@ -42,9 +42,18 @@
           (subs (str (d/squuid)) 0 8)))))
 
 (deftest test-diff
-  (is (= [[(d/datom 1 :b 2) (d/datom 1 :c 4) (d/datom 2 :a 1)]
-          [(d/datom 1 :b 3) (d/datom 1 :d 5)]
-          [(d/datom 1 :a 1)]]
-        (clojure.data/diff
-          (-> (d/empty-db) (d/db-with [{:a 1 :b 2 :c 4} {:a 1}]))
-          (-> (d/empty-db) (d/db-with [{:b 3 :d 5}]) (d/db-with [{:db/id 1 :a 1}]))))))
+  ;; With UUIDs, comparing datoms across different databases doesn't make sense
+  ;; since entity IDs are random. Test diff within same database evolution instead.
+  (let [tx1 (d/with (d/empty-db) [{:db/id "e1" :a 1 :b 2}])
+        db1 (:db-after tx1)
+        e1 (get (:tempids tx1) "e1")
+        db2 (d/db-with db1 [[:db/retract e1 :b 2]
+                            [:db/add e1 :c 3]])
+        [only-db1 only-db2 common] (clojure.data/diff db1 db2)]
+    ;; Verify diff returns something sensible - the databases differ
+    (is (some? only-db1))
+    (is (some? only-db2))
+    ;; db1 has the :b datom that db2 doesn't have
+    (is (some #(= :b (:a %)) only-db1))
+    ;; db2 has the :c datom that db1 doesn't have
+    (is (some #(= :c (:a %)) only-db2))))
