@@ -2043,7 +2043,7 @@
                                   ;; Another tempid already claimed this value
                                   (swap! tempid->upsert assoc tempid existing-uuid)
                                   ;; First tempid with this value - generate UUID
-                                  (let [new-uuid (random-uuid)]
+                                  (let [new-uuid (squuid/generate-squuid)]
                                     (swap! tempid->upsert assoc tempid new-uuid)
                                     (swap! identity-value->uuid assoc key new-uuid))))))))
                       attrs)))))))
@@ -2051,7 +2051,7 @@
      :identity-value->uuid @identity-value->uuid}))
 
 (defn- assign-entity-ids
-  "Assigns random UUIDs to entities that don't have a :db/id.
+  "Assigns squuids to entities that don't have a :db/id.
    Converts tempids (negative integers, strings) to UUIDs.
    For entity maps, generates a new UUID if :db/id is missing.
    For vector ops like [:db/add ...], the entity ID must be provided.
@@ -2082,7 +2082,7 @@
                                   ;; Another entity already claimed this value - map to it
                                   (swap! tempid->upsert assoc old-id existing-uuid)
                                   ;; First entity with this value - generate UUID and record it
-                                  (let [new-uuid (random-uuid)]
+                                  (let [new-uuid (squuid/generate-squuid)]
                                     (swap! tempid->upsert assoc old-id new-uuid)
                                     (swap! identity-value->uuid assoc key new-uuid))))))
                           entity))))))
@@ -2102,7 +2102,7 @@
                   ;; Otherwise use cached mapping or generate new UUID
                   (if-let [uuid (get @id-map id)]
                     uuid
-                    (let [uuid (random-uuid)]
+                    (let [uuid (squuid/generate-squuid)]
                       (swap! id-map assoc id uuid)
                       uuid)))
                 :else id))
@@ -2112,7 +2112,7 @@
                 (let [old-id (:db/id entity)
                       new-id (if (contains? entity :db/id)
                                (resolve-id old-id)
-                               (random-uuid))]
+                               (squuid/generate-squuid))]
                   (reduce-kv
                     (fn [entity a v]
                       (cond
@@ -2216,13 +2216,6 @@
    Generated once at transaction start and cached in ::tx-id."
   [report]
   (::tx-id report))
-
-(defn- next-eid
-  "Generates a new squuid for an entity. Squuids increase monotonically, so
-   entity ids sort by creation time (like Datomic's growing entity ids) and
-   new tuples cluster at the end of SlateDB's keyspace."
-  [_db]
-  (squuid/generate-squuid))
 
 #?(:clj
    (defn- ^Boolean tx-id?
