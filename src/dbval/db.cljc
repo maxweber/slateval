@@ -5,7 +5,6 @@
     [clojure.data]
     [clojure.edn :as edn]
     [clojure.string :as str]
-    [clojure.java.io :as io]
     #?(:clj [dbval.inline :refer [update]])
     [dbval.lru :as lru]
     [dbval.util :as util]
@@ -13,7 +12,10 @@
     [me.tonsky.persistent-sorted-set.arrays :as arrays]
     [taoensso.nippy :as nippy]
     [com.yetanalytics.squuid :as squuid])
-  #?(:clj (:import clojure.lang.IFn$OOL))
+  #?(:clj (:import clojure.lang.IFn$OOL
+                    java.util.concurrent.CompletableFuture
+                    [io.slatedb.uniffi Db DbBuilder ObjectStore DbIterator KeyValue WriteBatch
+                                       KeyRange ScanOptions IterationOrder DurabilityLevel]))
   #?(:cljs (:require-macros [dbval.db :refer [case-tree combine-cmp defn+ defcomp defrecord-updatable int-compare validate-attr validate-val]]))
   (:refer-clojure :exclude [seqable? #?(:clj update)]))
 
@@ -956,67 +958,129 @@
           :aevt)
         :eavt))))
 
-(defn- sqlite-jdbc-url
-  "Builds a full SQLite JDBC URL with optional pragmas."
-  [db-file {:keys [busy-timeout-ms foreign-keys? wal? read-only? mmap-size sync]
-            :or   {busy-timeout-ms 5000
-                   foreign-keys?   true
-                   wal?            true
-                   read-only?      false
-                   sync            "NORMAL"}}]
-  (let [params (cond-> {"busy_timeout" busy-timeout-ms
-                        "foreign_keys" (if foreign-keys? "on" "off")
-                        "synchronous"  (str sync)}
-                 wal?       (assoc "journal_mode" "WAL")
-                 read-only? (assoc "mode" "ro")
-                 mmap-size  (assoc "mmap_size" mmap-size))
-        qs     (->> params
-                    (map (fn [[k v]] (str k "=" v)))
-                    (str/join "&"))]
-    (str "jdbc:sqlite:" db-file (when (seq qs) (str "?" qs)))))
+(def ^:private ^bytes EMPTY_VALUE
+  "Empty byte array used as value for key-only puts in SlateDB."
+  (byte-array 0))
 
-(defn ^java.sql.Connection get-sqlite-connection
-  "Returns a java.sql.Connection for the given SQLite file.
-   Caller must close the connection manually."
-  [{:keys [db-file opts]}]
-  ;; explicitly load the driver class
-  (java.lang.Class/forName "org.sqlite.JDBC")
-  (let [^String url (sqlite-jdbc-url db-file opts)
-        conn (java.sql.DriverManager/getConnection url)]
-    (.setAutoCommit conn false)
-    conn))
+(defonce ^:private native-lib-loaded
+  ;; The slatedb-uniffi jar bundles the native library in JNA resource layout
+  ;; (e.g. linux-x86-64/libslatedb_uniffi.so), but its generated loader only
+  ;; calls System/loadLibrary. Extract the bundled library via JNA and point
+  ;; the uniffi loader at it before the first native call.
+  (delay
+    (when-not (System/getProperty "uniffi.component.slatedb.libraryOverride")
+      (let [lib (com.sun.jna.Native/extractFromResourcePath "slatedb_uniffi")]
+        (System/setProperty "uniffi.component.slatedb.libraryOverride"
+                            (.getAbsolutePath lib))))
+    true))
+
+(defn- await-future
+  "Blocks on a CompletableFuture and returns its value.
+   The uniffi bindings expose all SlateDB operations as async futures."
+  [^CompletableFuture fut]
+  (.join fut))
+
+(defn- open-slatedb
+  "Opens a SlateDB instance at the given path within the object store
+   resolved from the given URL (e.g. \"file:///\" or \"memory:///\").
+   The URL must not contain a path component; the db path is relative
+   to the store root. Returns an io.slatedb.uniffi.Db handle."
+  ^Db [^String db-path ^String object-store-url]
+  @native-lib-loaded
+  (let [path (str/replace db-path #"^/+" "")]
+    (with-open [store   (ObjectStore/resolve object-store-url)
+                builder (DbBuilder. path store)]
+      (await-future (.build builder)))))
+
+(defn- scan-options
+  "ScanOptions with library defaults and the given iteration order."
+  ^ScanOptions [reverse]
+  (ScanOptions. DurabilityLevel/MEMORY false 1 false 1
+                (if reverse IterationOrder/DESCENDING IterationOrder/ASCENDING)
+                nil))
+
+(defn- pending-keys-in-range
+  "Returns a seq of byte-arrays from the pending-writes TreeSet that fall in [begin, end).
+   When reverse is true, returns in descending order."
+  [^java.util.TreeSet pending-writes ^bytes begin ^bytes end reverse]
+  (when pending-writes
+    (let [sub (.subSet pending-writes begin true end false)]
+      (if reverse
+        (seq (.descendingSet ^java.util.NavigableSet sub))
+        (seq sub)))))
 
 (defn slice
   [{:keys [db ^bytes begin ^bytes end reverse]}]
   (reify java.lang.Iterable
     (iterator [_]
-      (let [^java.sql.Connection conn (:conn db)
-            ^java.sql.PreparedStatement stmt
-            (.prepareStatement conn
-                               (str "select k from dbval where k >= ? and k < ?"
-                                    (when reverse
-                                      " order by k desc"))
-                               java.sql.ResultSet/TYPE_FORWARD_ONLY
-                               java.sql.ResultSet/CONCUR_READ_ONLY)
-            _ (.setBytes stmt 1 begin)
-            _ (.setBytes stmt 2 end)
-            _ (.setFetchSize ^java.sql.Statement stmt 1000) ; hint (SQLite may ignore)
-            ^java.sql.ResultSet rs (.executeQuery stmt)
-
+      (let [^Db conn (:conn db)
+            ^DbIterator iter (await-future
+                              (.scanWithOptions conn
+                                                (KeyRange. begin true end false)
+                                                (scan-options reverse)))
+            pending  (pending-keys-in-range (:pending-writes db) begin end reverse)
+            pending-iter (atom pending)
             next-val (atom nil)
             advanced (atom false)
             closed   (atom false)
             close!   (fn []
                        (when-not @closed
                          (reset! closed true)
-                         (try (.close rs)   (catch Throwable _))
-                         (try (.close stmt) (catch Throwable _))
-                         ))
+                         (try (.close iter) (catch Throwable _))))
+            ;; Advance the SlateDB iterator, returning [key true] or [nil false]
+            slate-advance! (fn []
+                             (if @closed
+                               [nil false]
+                               (if-some [^KeyValue kv (await-future (.next iter))]
+                                 [(.key kv) true]
+                                 (do (close!) [nil false]))))
+            ;; Merge pending in-memory keys with SlateDB scan results
+            slate-buf (atom nil)   ;; buffered SlateDB key (already read but not yet consumed)
             advance! (fn []
-                       (when-not @closed
-                         (if (.next rs)
-                           (do (reset! next-val (.getBytes rs "k")) true)
-                           (do (reset! next-val nil) (close!) false))))]
+                       (let [p     (first @pending-iter)
+                             [s-key s-ok] (if @slate-buf
+                                            [@slate-buf true]
+                                            (slate-advance!))
+                             _     (reset! slate-buf nil)]
+                         (cond
+                           ;; Both sources exhausted
+                           (and (nil? p) (not s-ok))
+                           false
+
+                           ;; Only pending left
+                           (and (some? p) (not s-ok))
+                           (do (reset! next-val p)
+                               (swap! pending-iter rest)
+                               true)
+
+                           ;; Only slate left
+                           (and (nil? p) s-ok)
+                           (do (reset! next-val s-key)
+                               true)
+
+                           ;; Both available — pick based on order, skip duplicates
+                           :else
+                           (let [cmp (byte-array-compare p s-key)]
+                             (cond
+                               ;; pending comes first (or first in reverse)
+                               (if reverse (pos? cmp) (neg? cmp))
+                               (do (reset! next-val p)
+                                   (swap! pending-iter rest)
+                                   (reset! slate-buf s-key)
+                                   true)
+
+                               ;; same key — pending wins, skip slate duplicate
+                               (zero? cmp)
+                               (do (reset! next-val p)
+                                   (swap! pending-iter rest)
+                                   true)
+
+                               ;; slate comes first
+                               :else
+                               (do (reset! next-val s-key)
+                                   (reset! slate-buf nil)
+                                   ;; keep p for next round
+                                   true))))))]
 
         (reify java.util.Iterator
           (hasNext [this]
@@ -1417,20 +1481,6 @@
             (when (= :db.cardinality/many (:db/cardinality (get schema attr)))
               (util/raise a " :db/tupleAttrs can't depend on :db.cardinality/many attribute: " attr ex-data))))))))
 
-(defn execute-sql!
-  "Executes a single SQL statement using the given java.sql.Connection.
-   Returns true if the statement returned a ResultSet, or false for an update/count.
-   Example:
-     (execute-sql! conn \"create table if not exists users (id integer primary key, name text)\")"
-  [^java.sql.Connection conn ^String sql]
-  (with-open [stmt (.createStatement conn)]
-    (.execute ^java.sql.Statement stmt sql)))
-
-(defn create-table!
-  [^java.sql.Connection conn]
-  ;; Create a table
-  (execute-sql! conn "create table if not exists dbval (k blob not null, primary key(k)) WITHOUT ROWID;"))
-
 (defn q-max-tx
   [db]
   (let [[begin end] (tuple-range "teav")
@@ -1447,15 +1497,11 @@
 (defn ^DB empty-db [schema opts]
   {:pre [(or (nil? schema) (map? schema))]}
   (validate-schema schema)
-  (let [db-file (or (:db-file opts)
-                    (.getCanonicalPath
-                     (java.io.File/createTempFile (str (random-uuid))
-                                                  ".db")))
-        _ (io/make-parents db-file)
-        ;; TODO: consider how to close the connection:
-        conn ^java.sql.Connection (get-sqlite-connection {:db-file db-file})
-        _ (create-table! conn)
-        _ (.commit conn)
+  (let [tmp-dir   (System/getProperty "java.io.tmpdir")
+        db-file   (or (:db-file opts)
+                      (str tmp-dir java.io.File/separator "slateval-" (random-uuid)))
+        store-url (or (:object-store-url opts) "file:///")
+        conn (open-slatedb db-file store-url)
         db (map->DB
             {:schema        schema
              :max-tx        tx0
@@ -2125,12 +2171,12 @@
          false))
 
 (defn set-add!
-  [db stmt tuple]
+  [db ^WriteBatch batch tuple]
   (try
-    (.setBytes ^java.sql.PreparedStatement stmt
-               1
-               (pack tuple))
-    (.addBatch ^java.sql.PreparedStatement stmt)
+    (let [^bytes k (pack tuple)]
+      (.put batch k EMPTY_VALUE)
+      (when-some [^java.util.TreeSet pw (:pending-writes db)]
+        (.add pw k)))
     (catch Exception e
       (throw (ex-info "set-add! failed"
                       {:tuple tuple}
@@ -2138,47 +2184,41 @@
   db)
 
 (defn all-tuples
-  "Returns a reducible of all tuples stored in the dbval table.
+  "Returns a reducible of all tuples stored in SlateDB.
    Each tuple is decoded from its byte representation.
    Useful for debugging and inspecting the raw storage.
    Example: (into [] (take 10) (all-tuples db))"
   [db]
   (reify clojure.lang.IReduceInit
     (reduce [_ rf init]
-      (let [conn ^java.sql.Connection (:conn db)]
-        (with-open [stmt (.prepareStatement conn "SELECT k FROM dbval ORDER BY k")
-                    rs (.executeQuery stmt)]
+      (let [^Db conn (:conn db)]
+        (with-open [^DbIterator iter (await-future
+                                      (.scan conn (KeyRange. nil true nil false)))]
           (loop [state init]
-            (if (or (reduced? state) (not (.next rs)))
-              (unreduced state)
-              (recur (rf state (vec (tuple-from-bytes (.getBytes rs "k"))))))))))))
+            (let [^KeyValue kv (await-future (.next iter))]
+              (if (or (reduced? state) (nil? kv))
+                (unreduced state)
+                (recur (rf state (vec (tuple-from-bytes (.key kv)))))))))))))
 
-(defn with-datom [db ^Datom datom]
+(defn with-datom [db ^Datom datom ^WriteBatch batch]
   (validate-datom db datom)
-  (let [conn ^java.sql.Connection (:conn db)
-        stmt ^java.sql.PreparedStatement (.prepareStatement
-                                           conn
-                                           "INSERT OR IGNORE INTO dbval (k) VALUES (?)")
-        indexing? (indexing? db (.-a datom))
-        db (if (datom-added datom)
-             (-> db
-                 (set-add! stmt (datom-tuple db :eavt datom))
-                 (set-add! stmt (datom-tuple db :aevt datom))
-                 (cond-> indexing? (set-add! stmt (datom-tuple db :avet datom)))
-                 (set-add! stmt (datom-tuple db :teav datom))
-                 (assoc :hash (atom 0)))
-             (if-some [removing (some-> (fsearch db [(.-e datom) (.-a datom) (.-v datom)])
-                                        (retract-datom (:tx datom)))]
-               (-> db
-                   (set-add! stmt (datom-tuple db :eavt removing))
-                   (set-add! stmt (datom-tuple db :aevt removing))
-                   (cond-> indexing? (set-add! stmt (datom-tuple db :avet removing)))
-                   (set-add! stmt (datom-tuple db :teav removing))
-                   (assoc :hash (atom 0)))
-               db))]
-    (.executeBatch stmt)
-    (.close stmt)
-    db))
+  (let [indexing? (indexing? db (.-a datom))]
+    (if (datom-added datom)
+      (-> db
+          (set-add! batch (datom-tuple db :eavt datom))
+          (set-add! batch (datom-tuple db :aevt datom))
+          (cond-> indexing? (set-add! batch (datom-tuple db :avet datom)))
+          (set-add! batch (datom-tuple db :teav datom))
+          (assoc :hash (atom 0)))
+      (if-some [removing (some-> (fsearch db [(.-e datom) (.-a datom) (.-v datom)])
+                                  (retract-datom (:tx datom)))]
+        (-> db
+            (set-add! batch (datom-tuple db :eavt removing))
+            (set-add! batch (datom-tuple db :aevt removing))
+            (cond-> indexing? (set-add! batch (datom-tuple db :avet removing)))
+            (set-add! batch (datom-tuple db :teav removing))
+            (assoc :hash (atom 0)))
+        db))))
 
 (defn- queue-tuple [queue tuple idx db e a v]
   (let [tuple-attrs    (-> db (-schema) (get tuple) :db/tupleAttrs)
@@ -2207,9 +2247,10 @@
 
 (defn- transact-report [report datom]
   (let [db      (:db-after report)
+        batch   (::batch report)
         a       (:a datom)
         report' (-> report
-                  (assoc :db-after (with-datom db datom))
+                  (assoc :db-after (with-datom db datom batch))
                   (update :tx-data conj datom))]
     (if (tuple-source? db a)
       (let [e      (:e datom)
@@ -2398,24 +2439,10 @@
 #?(:clj  (declare transact-tx-data-impl)
    :cljs (defn transact-tx-data-impl [initial-report initial-es]))
 
-#?(:clj
-   (defn- rollback-report!
-     "Rolls the JDBC connection back to the transaction start before a retry.
-      Ensures tuple writes and schema mutations are cleared prior to re-running."
-     [report]
-     (when-let [conn (some-> report :db-after :conn)]
-       (try
-         (.rollback ^java.sql.Connection conn)
-         (.setAutoCommit ^java.sql.Connection conn false)
-         (catch Throwable t
-           (throw (ex-info "Failed to rollback transaction for retry"
-                           {:error :transact/retry}
-                           t))))))
-   :cljs
-   (defn ^:private rollback-report!
-     "No-op placeholder for CLJS where transactions are in-memory."
-     [report]
-     report))
+(defn- rollback-report!
+  "No-op — SlateDB WriteBatch provides atomicity; nothing to rollback mid-batch."
+  [report]
+  report)
 
 (def builtin-fn?
   #{:db.fn/call
@@ -2689,26 +2716,9 @@
           {:error :transact/syntax, :tx-data entity})))))
 
 (defmacro with-transaction
-  "Run BODY within a JDBC transaction on CONN.
-   - If CONN is already in a transaction (autocommit=false), just join it.
-   - If autocommit=true, disable it, start a transaction, and commit/rollback at the end."
-  [^java.sql.Connection conn & body]
-  `(let [was-auto?# (.getAutoCommit ~conn)]
-     (if-not was-auto?#
-       ;; Already inside a transaction — just run the body
-       (do ~@body)
-       ;; Start and manage a new transaction
-       (do
-         (.setAutoCommit ~conn false)
-         (try
-           (let [res# (do ~@body)]
-             (.commit ~conn)
-             res#)
-           (catch Throwable t#
-             (try (.rollback ~conn) (catch Throwable _#))
-             (throw t#))
-           (finally
-             (.setAutoCommit ~conn true)))))))
+  "Passthrough — atomicity is provided by SlateDB WriteBatch."
+  [_conn & body]
+  `(do ~@body))
 
 (defn transact-tx-data [report es]
   (when-not (or
@@ -2725,16 +2735,22 @@
         {:keys [tx-data id-map]} (assign-entity-ids (:db-before report') es)
         ;; Pre-populate tempids with the tempid -> UUID mapping
         report'' (update report' :tempids merge id-map)
-        conn ^java.sql.Connection (:conn (:db-after report''))]
+        ^Db conn (:conn (:db-after report''))
+        batch (WriteBatch.)
+        pending-writes (java.util.TreeSet. ^java.util.Comparator byte-array-comparator)
+        report''' (-> report''
+                      (assoc ::batch batch)
+                      (update :db-after assoc :pending-writes pending-writes))]
     (try
-      (let [result (with-transaction conn
-                     (transact-tx-data-impl report'' tx-data))]
-        (.commit conn)
+      (let [result (transact-tx-data-impl report''' tx-data)]
+        (when-not (.isEmpty pending-writes)
+          (await-future (.write conn batch)))
         ;; Add :tx field with the transaction UUID
-        (assoc result :tx tx-id))
-      (catch Throwable t
-        (try
-          (.rollback conn)
-          (.setAutoCommit conn false)
-          (catch Throwable _))
-        (throw t)))))
+        (-> result
+            (dissoc ::batch)
+            (update :db-after dissoc :pending-writes)
+            (assoc :tx tx-id)))
+      (finally
+        ;; on success the batch contents were consumed by the write;
+        ;; on error the batch is simply discarded (no rollback needed)
+        (try (.close batch) (catch Throwable _))))))
