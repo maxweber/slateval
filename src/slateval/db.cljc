@@ -714,7 +714,12 @@
     (or (map? v)
         (keyword? v)
         (symbol? v)
-        (string? v))
+        (string? v)
+        ;; dates print as fixed-width #inst literals, so the lexicographic
+        ;; tuple order stays chronological and edn/read-string restores the
+        ;; date in deserialize-value
+        #?(:clj  (instance? java.util.Date v)
+           :cljs (instance? js/Date v)))
     (pr-str v)
 
     (sequential? v)
@@ -722,6 +727,14 @@
 
     :else
     v))
+
+(defn attr-compare
+  "Compares attribute keywords in storage order: datoms are stored with
+   pr-str'ed attributes, so the index order is the string order of the
+   printed keyword, not Clojure's keyword order (which sorts by namespace
+   first). Consumers that merge-join against index scans must use this."
+  [a b]
+  (compare (pr-str a) (pr-str b)))
 
 (defn tuple-list
   [db order datom]
@@ -2205,9 +2218,11 @@
   (::tx-id report))
 
 (defn- next-eid
-  "Generates a new random UUID for an entity."
+  "Generates a new squuid for an entity. Squuids increase monotonically, so
+   entity ids sort by creation time (like Datomic's growing entity ids) and
+   new tuples cluster at the end of SlateDB's keyspace."
   [_db]
-  (random-uuid))
+  (squuid/generate-squuid))
 
 #?(:clj
    (defn- ^Boolean tx-id?

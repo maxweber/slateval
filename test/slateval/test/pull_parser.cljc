@@ -43,7 +43,8 @@
     ; wildcards
     ['*]         (pattern :attrs [(attr :db/id)] :wildcard? true)
     ["*"]        (pattern :attrs [(attr :db/id)] :wildcard? true)
-    ['* :normal] (pattern :attrs [(attr :normal) (attr :db/id)] :wildcard? true)
+    ;; attrs sort in storage order (pr-str string order): ":db/id" < ":normal"
+    ['* :normal] (pattern :attrs [(attr :db/id) (attr :normal)] :wildcard? true)
     ['* :db/id]  (pattern :attrs [(attr :db/id)] :wildcard? true)
     ['* [:db/id :as :xxx]] (pattern :attrs [(attr :db/id :as :xxx)] :wildcard? true)
 

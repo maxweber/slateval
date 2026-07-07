@@ -141,7 +141,7 @@
 
         :let [^Datom datom (first-seq datoms)
               cmp          (when (and datom attr)
-                             (compare (.-name attr) (.-a datom)))
+                             (db/attr-compare (.-name attr) (.-a datom)))
               attr-ahead?  (or (nil? attr) (and cmp (pos? cmp)))
               datom-ahead? (or (nil? datom) (and cmp (neg? cmp)))]
 
@@ -289,8 +289,8 @@
                  (take-while (fn [datom]
                                (and (= (:e datom)
                                        id)
-                                    (<= (compare (:a datom)
-                                                 to)
+                                    (<= (db/attr-compare (:a datom)
+                                                         to)
                                         0)))
                              (db/-seek-datoms db :eavt id from nil nil))
 

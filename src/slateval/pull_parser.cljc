@@ -165,7 +165,9 @@
                               (not (some db-id? (.-attrs result))))
                           (conj attrs default-db-id-attr)
                           attrs)
-            attrs       (list* (sort-by key-fn attrs))
+            ;; sort in storage order (pr-str'ed keyword strings) so the
+            ;; merge-join in pull-api lines up with the eavt index scan
+            attrs       (list* (sort-by (comp pr-str key-fn) attrs))
             datom-attrs (remove db-id? attrs)
             first-attr  (first datom-attrs)
             last-attr   (last datom-attrs)]
@@ -173,7 +175,7 @@
           {:attrs         attrs
            :first-attr    first-attr
            :last-attr     last-attr
-           :reverse-attrs (list* (sort-by key-fn (.-reverse-attrs result)))
+           :reverse-attrs (list* (sort-by (comp pr-str key-fn) (.-reverse-attrs result)))
            :wildcard?     (.-wildcard? result)}))
 
       :let [attr-spec (first pattern)]

@@ -9,6 +9,7 @@
     [slateval.query :as dq]
     [slateval.impl.entity :as de]
     [slateval.util :as util]
+    [com.yetanalytics.squuid :as squuid]
     [me.tonsky.persistent-sorted-set :as set])
   #?(:clj
      (:import
@@ -584,10 +585,10 @@
 ;; UUID-based ID generation
 
 (def gen-id
-  "Generates a random UUID for use as an entity id.
+  "Generates a squuid for use as an entity id. Squuids increase
+   monotonically, so entity ids sort by creation time.
    Call as (gen-id) to get a new UUID."
-  #?(:clj  #(java.util.UUID/randomUUID)
-     :cljs #(random-uuid)))
+  squuid/generate-squuid)
 
 ;; Datomic compatibility layer
 
