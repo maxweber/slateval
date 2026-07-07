@@ -7,6 +7,6 @@ global.performance = {
        }
 }
 
-require("../target/dbval.js");
+require("../target/slateval.js");
 
-dbval.bench.dbval._main(...process.argv.slice(2));
+slateval.bench.slateval._main(...process.argv.slice(2));

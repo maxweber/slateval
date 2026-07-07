@@ -1,6 +1,6 @@
-# dbval
+# slateval
 
-dbval is a fork of [Datascript](https://github.com/tonsky/datascript) and a
+slateval is a fork of [Datascript](https://github.com/tonsky/datascript) and a
 proof-of-concept (aka 'do not use it in production') that you can implement a
 library that offers Datomic-like semantics on top of a mutable relational
 database like Sqlite.
@@ -34,9 +34,9 @@ database per (SaaS) customer.
 At its core FoundationDB is a transactional ordered key value store. Something
 you can mimic in Sqlite with a table like:
 
-    create table dbval (k blob not null, primary key(k)) WITHOUT ROWID;
+    create table slateval (k blob not null, primary key(k)) WITHOUT ROWID;
 
-dbval only needs the key portion. Consequently, you are dealing with a sorted
+slateval only needs the key portion. Consequently, you are dealing with a sorted
 set and Datascript's core is a
 [persistent-sorted-set](https://github.com/tonsky/persistent-sorted-set).
 
@@ -44,11 +44,11 @@ I first assumed that I need to make one part of a datom mutable, so that I can
 mark it as retracted. Until I discovered that the sorting of `t` in the Datomic
 indexes `:eavt`, `:aevt`, `:avet` and `:vaet` allows to figure out what the
 current state was at a given point in time, so that you can serve an immutable
-database value. The secret sauce can be found in the `dbval.db/datoms-filter`
+database value. The secret sauce can be found in the `slateval.db/datoms-filter`
 transducer.
 
 One obvious downside is that the database will keep growing forever, potentially
-making `dbval.db/datoms-filter` slower and slower over time. However, from one
+making `slateval.db/datoms-filter` slower and slower over time. However, from one
 of the many Datomic talks I learned a nice trick to mitigate this. You can have
 one table that contain the complete history, while another one might only
 contain the history of the last 30 days. Consequently, you need to query the
@@ -71,8 +71,8 @@ subfolders on your file system. Let's assume we have the following datom:
 
     [123 :language "Clojure" 1001 true]
 
-Then dbval maintains the following indexes, by inserting the corresponding
-tuples into the dbval table:
+Then slateval maintains the following indexes, by inserting the corresponding
+tuples into the slateval table:
 
 | 0       | 1        | 2        | 3         | 4        | 5     |
 |---------|----------|----------|-----------|----------|-------|
@@ -83,7 +83,7 @@ tuples into the dbval table:
 
 
 The last boolean indicates if the Datom was added or retracted. Like Datascript
-dbval does not maintain a "vaet" index (like Datomic does). Additionally dbval
+slateval does not maintain a "vaet" index (like Datomic does). Additionally slateval
 maintains the "teav" index that can be used to efficiently retrieve the most
 recent transaction.
 
@@ -98,8 +98,8 @@ Datomic exist, so that you have the option to make different trade-offs.
 
 Luckily there are already a couple of Datomic open source alternatives. Why
 another one? Some does not offer you the database as a value. But the key is
-that dbval tries to pick a minimal scope, since implementing a database almost
-from scratch is a humongous task. For that reason dbval considers itself as a
+that slateval tries to pick a minimal scope, since implementing a database almost
+from scratch is a humongous task. For that reason slateval considers itself as a
 database library and only tries to marry Datascript with Sqlite. Most
 database-related features are already solved by Sqlite or its
 [ecosystem](https://litestream.io/).
@@ -110,11 +110,11 @@ DataScript 2](https://tonsky.me/blog/datascript-2/):
 > UUIDs for entity IDs makes it easier to generate new IDs in distributed
 > environment without consulting central authority.
 
-dbval uses UUIDs for entity IDs. The biggest motivator is to avoid the need to
+slateval uses UUIDs for entity IDs. The biggest motivator is to avoid the need to
 assign an external ID to each entity. In past we often made the mistake to share
 Datomic entity IDs with the outside world (via an API for example), while this
 is strictly discouraged. In Datomic and Datascript each transaction also receive
-its own entity ID. dbval uses
+its own entity ID. slateval uses
 [colossal-squuid](https://github.com/yetanalytics/colossal-squuid) UUIDs for
 transaction entity IDs. They increase strictly monotonically, meaning:
 
@@ -134,7 +134,7 @@ encoded in the leading bits of the SQUUID:
 
 This timestamp can serve as `:db/txInstant` to capture when the transaction has
 been transacted. UUIDs for entity and transaction IDs would allow to entirely
-get rid of tempids. However, they are still supported by dbval for convenience
+get rid of tempids. However, they are still supported by slateval for convenience
 and to assign data to the transaction entity:
 
 ``` clojure
@@ -146,11 +146,11 @@ and to assign data to the transaction entity:
    [:db/add :db/current-tx :tx/source :api]])
 ```
 
-Another compelling option of using UUIDs is that dbval databases become
+Another compelling option of using UUIDs is that slateval databases become
 mergeable, if they adhere to the same schema. Thereby you can solve the
 following challenge: if you have a separate database per customer it is no
 longer possible to run database queries to get statistics across your customer
-base. With dbval you can merge all customer databases into a big one to run
+base. With slateval you can merge all customer databases into a big one to run
 these statistics queries.
 
 One obvious downside of UUIDs is that they need twice as much storage in
@@ -168,7 +168,7 @@ point is to run the unit tests via:
 
 - Mature the library into something 'production-ready'
 
-- dbval should add a `:db/txInstant` to each transaction entity with a
+- slateval should add a `:db/txInstant` to each transaction entity with a
   `java.util.Date` of when the transaction was transacted.
 
 - Add an equivalent to `datomic.api/as-of`
@@ -183,5 +183,5 @@ point is to run the unit tests via:
 
 - Consider to increase `tx0`, `emax` and `txmax`
 
-- Build an example application app with dbval + Sqlite as a database to check if
+- Build an example application app with slateval + Sqlite as a database to check if
   something is missing.

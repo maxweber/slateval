@@ -1,1 +1,1 @@
-{:externs ["dbval/externs.js"]}
+{:externs ["slateval/externs.js"]}

@@ -11,7 +11,7 @@
   duti/-main)
 
 (defn test-all []
-  (duti/test #"dbval\.test\.(?!cljs).*"))
+  (duti/test #"slateval\.test\.(?!cljs).*"))
 
 (defn -test-main [_]
-  (duti/test-exit #"dbval\.test\.(?!cljs).*"))
+  (duti/test-exit #"slateval\.test\.(?!cljs).*"))

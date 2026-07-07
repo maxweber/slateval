@@ -35,7 +35,7 @@
 
   :dev
   {:extra-paths ["dev" "test"]
-   :jvm-opts    ["-ea" "-Ddbval.debug" "-Dclojure.main.report=stderr" "-Djdk.attach.allowAttachSelf"
+   :jvm-opts    ["-ea" "-Dslateval.debug" "-Dclojure.main.report=stderr" "-Djdk.attach.allowAttachSelf"
                  "--enable-native-access=ALL-UNNAMED"]
    :extra-deps
    {io.github.tonsky/duti      {:git/sha "e36d65296a4f9758664309ec35b00887e88c405a"}

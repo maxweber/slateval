@@ -1,5 +1,5 @@
 (ns test-datomic.pull-api
-  "Mirrors dbval.test.pull-api with Datomic to check they behave the same"
+  "Mirrors slateval.test.pull-api with Datomic to check they behave the same"
   (:require
     [clojure.test :refer :all]
     [datomic.api :as datomic]))

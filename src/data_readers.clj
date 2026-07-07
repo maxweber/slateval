@@ -1,2 +1,2 @@
-{dbval/Datom dbval.db/datom-from-reader
- dbval/DB    dbval.db/db-from-reader}
+{slateval/Datom slateval.db/datom-from-reader
+ slateval/DB    slateval.db/db-from-reader}
