@@ -719,7 +719,14 @@
         ;; tuple order stays chronological and edn/read-string restores the
         ;; date in deserialize-value
         #?(:clj  (instance? java.util.Date v)
-           :cljs (instance? js/Date v)))
+           :cljs (instance? js/Date v))
+        ;; big numbers are not preserved by the FDB tuple encoding (they
+        ;; read back as longs); their EDN literals (5M, 123N) round-trip
+        ;; exactly. Note: as strings they do NOT sort numerically, so avoid
+        ;; range scans over bigdec/bigint attributes.
+        #?@(:clj [(decimal? v)
+                  (instance? clojure.lang.BigInt v)
+                  (instance? java.math.BigInteger v)]))
     (pr-str v)
 
     (sequential? v)
@@ -1287,6 +1294,7 @@
                               (when start*
                                 [(serialize-value db attr start*)]))
           [_ _ end*] (resolve-datom* db nil attr end nil)
+          ;; like Datascript: both ends are inclusive
           [_begin end] (apply tuple-range
                               "avet"
                               (pr-str attr)

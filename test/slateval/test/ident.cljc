@@ -21,9 +21,11 @@
                      :where [?f :ref :ent1]] db)))))
 
 (deftest test-transact!
-  (let [{:keys [db e2]} @*db
+  (let [{:keys [db]} @*db
         db' (d/db-with db [[:db/add :ent1 :ref :ent2]])]
-    (is (= e2 (-> (d/entity db' :ent1) :ref :db/id)))))
+    ;; like Datomic's entity API, a ref to an entity with a :db/ident
+    ;; collapses to the ident keyword
+    (is (= :ent2 (-> (d/entity db' :ent1) :ref)))))
 
 (deftest test-entity
   (let [{:keys [db]} @*db]

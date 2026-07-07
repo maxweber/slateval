@@ -17,13 +17,21 @@
     (when (db/eid-exists? db e)
       (->Entity db e (volatile! false) (volatile! {})))))
 
+(defn- ref-target
+  "Navigates a ref value. Like Datomic's entity API, a reference to an
+   entity that has a :db/ident collapses to the ident keyword (enums)."
+  [db v]
+  (if-some [ident (:v (first (db/-datoms db :eavt v :db/ident nil nil)))]
+    ident
+    (entity db v)))
+
 (defn- entity-attr [db a datoms]
   (if (db/multival? db a)
     (if (db/ref? db a)
-      (reduce #(conj %1 (entity db (:v %2))) #{} datoms)
+      (reduce #(conj %1 (ref-target db (:v %2))) #{} datoms)
       (reduce #(conj %1 (:v %2)) #{} datoms))
     (if (db/ref? db a)
-      (entity db (:v (first datoms)))
+      (ref-target db (:v (first datoms)))
       (:v (first datoms)))))
 
 (defn- -lookup-backwards [db eid attr not-found]
