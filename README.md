@@ -2,18 +2,20 @@
 
 slateval is a fork of [Datascript](https://github.com/tonsky/datascript) and a
 proof-of-concept (aka 'do not use it in production') that you can implement a
-library that offers Datomic-like semantics on top of a mutable relational
-database like Sqlite.
+library that offers Datomic-like semantics on top of
+[SlateDB](https://slatedb.io), an embedded ordered key-value store built on
+object storage.
 
 The most important goal is to serve the database as a value, meaning you can get
 the current database value and query it as long as you like without that it
 changes underneath you. You can also get the database as a value for any point
 in the past.
 
-Sqlite was chosen since you have no network-round trip when you read from the
-database. Thereby you can do [hundreds of small
-queries](https://www.sqlite.org/np1queryprob.html) instead of trying to force
-everything into one big SQL statement.
+SlateDB was chosen since it is embedded: reads are served from local memtables
+and caches without a network round trip per query. Thereby you can do [hundreds
+of small queries](https://www.sqlite.org/np1queryprob.html) instead of trying to
+force everything into one big query, while all data is durably persisted to
+object storage (S3, GCS, or simply the local filesystem during development).
 
 The idea to have something Datomic-like on top of a relational database was
 already born in 2013 during a project where we were forced to use Postgres
@@ -28,16 +30,20 @@ While FoundationDB is an amazing piece of technology it requires a lot of
 infrastructure. For us mortals there is basically only the option to use its
 Kubernetes operator. Meanwhile the [Rails
 community](https://m.youtube.com/watch?v=Sc4FJ0EZTAg) and projects like
-[Turso](https://turso.tech/) proofed that it is viable to have one Sqlite
-database per (SaaS) customer.
+[Turso](https://turso.tech/) proofed that it is viable to have one embedded
+database per (SaaS) customer. SlateDB makes this model even more compelling:
+since it keeps all of its data in object storage, one database per customer is
+just one path in a bucket, with 'bottomless' storage and cheap backups and
+replication for free.
 
-At its core FoundationDB is a transactional ordered key value store. Something
-you can mimic in Sqlite with a table like:
+At its core FoundationDB is a transactional ordered key value store — and so is
+SlateDB. An earlier iteration of slateval mimicked this on top of Sqlite with a
+single-column table (`create table slateval (k blob not null, primary key(k))
+WITHOUT ROWID;`); with SlateDB no mimicry is needed, it is natively an ordered
+key-value store.
 
-    create table slateval (k blob not null, primary key(k)) WITHOUT ROWID;
-
-slateval only needs the key portion. Consequently, you are dealing with a sorted
-set and Datascript's core is a
+slateval only needs the key portion (values are left empty). Consequently, you
+are dealing with a sorted set and Datascript's core is a
 [persistent-sorted-set](https://github.com/tonsky/persistent-sorted-set).
 
 I first assumed that I need to make one part of a datom mutable, so that I can
@@ -63,16 +69,16 @@ array logic is available via [Tuple
 class](https://apple.github.io/foundationdb/javadoc/com/apple/foundationdb/tuple/Tuple.html).
 
 One question that might arise is how you can have different indexes in a
-FoundationDB-like model. As you can see from the `create table` SQL statement
-above we only have a single column (with a btree index on it). In
+FoundationDB-like model, given that slateval stores everything in SlateDB's
+single ordered keyspace. In
 [FoundationDB](https://apple.github.io/foundationdb/simple-indexes-java.html)
 you use a prefix to differentiate between indexes. You can think of a bit like
 subfolders on your file system. Let's assume we have the following datom:
 
     [123 :language "Clojure" 1001 true]
 
-Then slateval maintains the following indexes, by inserting the corresponding
-tuples into the slateval table:
+Then slateval maintains the following indexes, by writing the corresponding
+tuples as keys into SlateDB:
 
 | 0       | 1        | 2        | 3         | 4        | 5     |
 |---------|----------|----------|-----------|----------|-------|
@@ -100,9 +106,11 @@ Luckily there are already a couple of Datomic open source alternatives. Why
 another one? Some does not offer you the database as a value. But the key is
 that slateval tries to pick a minimal scope, since implementing a database almost
 from scratch is a humongous task. For that reason slateval considers itself as a
-database library and only tries to marry Datascript with Sqlite. Most
-database-related features are already solved by Sqlite or its
-[ecosystem](https://litestream.io/).
+database library and only tries to marry Datascript with SlateDB. Most
+database-related features (durability, caching, compaction,
+[checkpoints and clones](https://slatedb.io/docs/design/checkpoints/)) are
+already solved by SlateDB, and backups plus replication come almost for free
+with object storage.
 
 As Datascript's creator Nikita Prokopov states in his blog post [Ideas for
 DataScript 2](https://tonsky.me/blog/datascript-2/):
@@ -164,6 +172,10 @@ point is to run the unit tests via:
 
     script/test_clj.sh
 
+The [SlateDB Java binding](https://slatedb.io/docs/get-started/quickstart/)
+(`io.slatedb/slatedb-uniffi`) requires Java 22 or newer. By default the tests
+create their databases under `java.io.tmpdir` using a `file://` object store.
+
 ## TODOs
 
 - Mature the library into something 'production-ready'
@@ -178,10 +190,10 @@ point is to run the unit tests via:
 - Also adapt the ClojureScript parts (broken at the moment).
 
     - There is [a JS libary](https://github.com/josephg/fdb-tuple) that implements the FoundationDB tuple encoding.
-    
-    - Doing [synchronous SQLite reads and writes in JavaScript](https://blog.cloudflare.com/sqlite-in-durable-objects/#reads-and-writes-are-synchronous) is viable (no need to make everything async).
+
+    - SlateDB ships JavaScript bindings ([@slatedb/uniffi](https://www.npmjs.com/package/@slatedb/uniffi)) that could back the ClojureScript port.
 
 - Consider to increase `tx0`, `emax` and `txmax`
 
-- Build an example application app with slateval + Sqlite as a database to check if
-  something is missing.
+- Build an example application app with slateval + SlateDB as a database to
+  check if something is missing.
