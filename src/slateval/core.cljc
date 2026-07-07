@@ -241,9 +241,36 @@
   "Same as [[transact!]], but applies to an immutable database value. Returns transaction report (see [[transact!]])."
   conn/with)
 
+(def ^{:arglists '([db tx-data] [db tx-data tx-meta])} with-dry-run
+  "Like [[with]], but speculative: nothing is written to storage. Reads on
+   the returned :db-after see the new datoms via an in-memory overlay."
+  conn/with-dry-run)
+
 (def ^{:arglists '([db tx-data]) :tag DB} db-with
   "Applies transaction to an immutable db value, returning new immutable db value. Same as `(:db-after (with db tx-data))`."
   conn/db-with)
+
+; Time travel
+
+(def ^{:arglists '([db t])} as-of
+  "Returns the value of the database as of transaction t (a transaction squuid or an instant)."
+  db/as-of)
+
+(def ^{:arglists '([db])} as-of-t
+  "Returns the as-of transaction of a db view created by [[as-of]], or nil."
+  db/as-of-t)
+
+(def ^{:arglists '([db t])} since
+  "Returns a value of the database containing only datoms asserted after transaction t (exclusive)."
+  db/since)
+
+(def ^{:arglists '([db])} since-t
+  "Returns the since transaction of a db view created by [[since]], or nil."
+  db/since-t)
+
+(def ^{:arglists '([db])} history
+  "Returns a value of the database containing all datom versions, including retractions."
+  db/history)
 
 (defn ^DB with-schema
   "Warning! No validation or conversion. Only change schema in a compatible way"

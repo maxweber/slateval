@@ -23,6 +23,9 @@
   ([db tx-data] (with db tx-data nil))
   ([db tx-data tx-meta]
    {:pre [(db/db? db)]}
+   (when (db/temporal-view? db)
+     (throw (ex-info "Cannot transact against an as-of/since/history database value"
+                     {:error :transact/temporal-view})))
    (let [q-max-tx (db/q-max-tx db)
          max-tx   (:max-tx db)]
      ;; Check that the storage hasn't been modified since this db snapshot was created.
@@ -35,6 +38,22 @@
    (if (instance? FilteredDB db)
      (throw (ex-info "Filtered DB cannot be modified" {:error :transaction/filtered}))
      (db/transact-tx-data (db/->TxReport db db [] {} tx-meta) tx-data))))
+
+(defn with-dry-run
+  "Like `with`, but speculative: the transaction is validated and applied to
+   the returned :db-after value in memory only — nothing is written to
+   storage. Reads on :db-after see the new datoms via its :pending-writes
+   overlay. Chaining another dry-run on the returned :db-after keeps the
+   previous speculative datoms visible; a real transact against a
+   speculative db value throws."
+  ([db tx-data] (with-dry-run db tx-data nil))
+  ([db tx-data tx-meta]
+   {:pre [(db/db? db)]}
+   (if (instance? FilteredDB db)
+     (throw (ex-info "Filtered DB cannot be modified" {:error :transaction/filtered}))
+     (db/transact-tx-data (assoc (db/->TxReport db db [] {} tx-meta)
+                                 :slateval.db/dry-run true)
+                          tx-data))))
 
 (defn ^DB db-with
   "Applies transaction to an immutable db value, returning new immutable db value. Same as `(:db-after (with db tx-data))`."

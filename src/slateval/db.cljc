@@ -926,6 +926,30 @@
                  (rf result d1))
                ))))))))
 
+(defn tx-visibility-xform
+  "Composed transducer that applies the db value's transaction visibility
+   rules to a stream of datoms:
+
+   - upper bound: only datoms with `tx <= (:max-tx db)` are visible. This is
+     what makes a db an immutable value (and what `as-of` relies on, since
+     transaction squuids increase monotonically).
+   - optional lower bound: when `:slateval/since` is set, only datoms with
+     `tx > since` are visible (see `since`).
+   - `datoms-filter` removes retracted datoms, unless `:slateval/history?` is
+     set, in which case all datom versions (including retractions) are
+     returned (see `history`)."
+  [db]
+  (apply comp
+         (concat
+          [(filter (fn [datom]
+                     (uuid<= (:tx datom)
+                             (:max-tx db))))]
+          (when-some [since (:slateval/since db)]
+            [(filter (fn [datom]
+                       (pos? (compare (:tx datom) since))))])
+          (when-not (:slateval/history? db)
+            [datoms-filter]))))
+
 (defn sort-components
   [order [c0 c1 c2 c3]]
   (case order
@@ -1152,10 +1176,7 @@
           ]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
-             (filter (fn [datom]
-                       (uuid<= (:tx datom)
-                               (:max-tx db))))
-             datoms-filter
+             (tx-visibility-xform db)
              (filter (partial datom=
                               [e a v tx])))
        (slice {:db db
@@ -1184,12 +1205,9 @@
                              components)]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
-               (filter (fn [datom]
-                         (uuid<= (:tx datom)
-                                 (:max-tx db))))
-               datoms-filter
-               (filter (partial datom=
-                                [e a v tx])))
+             (tx-visibility-xform db)
+             (filter (partial datom=
+                              [e a v tx])))
        (slice {:db db
                :begin begin
                :end end}))))
@@ -1214,10 +1232,7 @@
           [_begin end] (tuple-range (name index))]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
-             (filter (fn [datom]
-                       (uuid<= (:tx datom)
-                               (:max-tx db))))
-             datoms-filter)
+             (tx-visibility-xform db))
        (slice {:db db
                :begin begin
                :end end}))))
@@ -1243,10 +1258,7 @@
           [begin _end] (tuple-range (name index))]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
-             (filter (fn [datom]
-                       (uuid<= (:tx datom)
-                               (:max-tx db))))
-             datoms-filter)
+             (tx-visibility-xform db))
        (slice {:db db
                :begin begin
                :end end
@@ -1269,11 +1281,11 @@
                                 [(serialize-value db attr end*)]))]
       (->Eduction
        (comp (map (bytes-to-datoms-xf db))
-             datoms-filter)
+             (tx-visibility-xform db))
        (slice {:db db
                :begin begin
                :end end}))))
-                
+
   clojure.data/EqualityPartition
   (equality-partition [x] :slateval/db)
 
@@ -1493,7 +1505,71 @@
                 (tuple-from-bytes)
                 (second))
         tx0)))
-  
+
+(defn- coerce-tx
+  "Coerces t to a transaction squuid: a UUID is returned as-is, an instant
+   (java.util.Date or java.time.Instant) is converted to the highest
+   possible squuid for that timestamp."
+  [t]
+  (cond
+    (uuid? t) t
+    (inst? t) (squuid/time->uuid t)
+    :else     (util/raise "Expected a transaction UUID or an instant, got " t
+                          {:error :time-point/syntax, :t t})))
+
+(defn as-of
+  "Returns the value of the database as of transaction t (a transaction
+   squuid or an instant). Since transaction squuids increase strictly
+   monotonically, the as-of view is the same database value with `:max-tx`
+   bounded to t — every index read filters datoms accordingly (see
+   `tx-visibility-xform`)."
+  [db t]
+  {:pre [(db? db)]}
+  (let [tx (coerce-tx t)]
+    (assoc db
+           :max-tx tx
+           :slateval/as-of tx
+           :hash (atom 0))))
+
+(defn as-of-t
+  "Returns the as-of transaction of a database view created by `as-of`, or
+   nil if db is not an as-of view."
+  [db]
+  (:slateval/as-of db))
+
+(defn since
+  "Returns a value of the database containing only datoms asserted after
+   transaction t (exclusive). t is a transaction squuid or an instant."
+  [db t]
+  {:pre [(db? db)]}
+  (assoc db
+         :slateval/since (coerce-tx t)
+         :hash (atom 0)))
+
+(defn since-t
+  "Returns the since transaction of a database view created by `since`, or
+   nil if db is not a since view."
+  [db]
+  (:slateval/since db))
+
+(defn history
+  "Returns a value of the database containing all datom versions, including
+   retractions (`datoms-filter` is skipped, see `tx-visibility-xform`).
+   Datoms report assertion vs retraction via their `:added` flag."
+  [db]
+  {:pre [(db? db)]}
+  (assoc db
+         :slateval/history? true
+         :hash (atom 0)))
+
+(defn temporal-view?
+  "True if db is an as-of, since, or history view. Temporal views are
+   read-only: they cannot be transacted against."
+  [db]
+  (boolean (or (:slateval/as-of db)
+               (:slateval/since db)
+               (:slateval/history? db))))
+
 (defn ^DB empty-db [schema opts]
   {:pre [(or (nil? schema) (map? schema))]}
   (validate-schema schema)
@@ -2726,7 +2802,11 @@
               (sequential? es))
     (util/raise "Bad transaction data " es ", expected sequential collection"
       {:error :transact/syntax, :tx-data es}))
-  (let [tx-id (squuid/generate-squuid)
+  (when (temporal-view? (:db-before report))
+    (util/raise "Cannot transact against an as-of/since/history database value"
+      {:error :transact/temporal-view}))
+  (let [dry-run? (::dry-run report)
+        tx-id (squuid/generate-squuid)
         report' (-> report
                     (assoc ::tx-id tx-id)
                     ;; Set max-tx to current tx-id so datoms added during this
@@ -2738,19 +2818,38 @@
         ^Db conn (:conn (:db-after report''))
         batch (WriteBatch.)
         pending-writes (java.util.TreeSet. ^java.util.Comparator byte-array-comparator)
+        ;; Carry over speculative datoms when chaining a dry-run on a dry-run
+        ;; db-after, so they stay visible in the new speculative view. A real
+        ;; transact must not inherit them: they were never put into its batch
+        ;; and would go missing from storage.
+        _ (when dry-run?
+            (when-some [^java.util.TreeSet previous (:pending-writes (:db-after report''))]
+              (.addAll pending-writes previous)))
+        _ (when (and (not dry-run?)
+                     (:pending-writes (:db-after report'')))
+            (util/raise "Cannot transact against a speculative (dry-run) database value"
+              {:error :transact/speculative-view}))
         report''' (-> report''
                       (assoc ::batch batch)
                       (update :db-after assoc :pending-writes pending-writes))]
     (try
       (let [result (transact-tx-data-impl report''' tx-data)]
-        (when-not (.isEmpty pending-writes)
-          (await-future (.write conn batch)))
-        ;; Add :tx field with the transaction UUID
-        (-> result
-            (dissoc ::batch)
-            (update :db-after dissoc :pending-writes)
-            (assoc :tx tx-id)))
+        (if dry-run?
+          ;; Speculative transaction: nothing is written to storage. Keep
+          ;; :pending-writes on db-after so reads see the new datoms via the
+          ;; pending-writes overlay in `slice`.
+          (-> result
+              (dissoc ::batch ::dry-run)
+              (assoc :tx tx-id))
+          (do
+            (when-not (.isEmpty pending-writes)
+              (await-future (.write conn batch)))
+            ;; Add :tx field with the transaction UUID
+            (-> result
+                (dissoc ::batch)
+                (update :db-after dissoc :pending-writes)
+                (assoc :tx tx-id)))))
       (finally
         ;; on success the batch contents were consumed by the write;
-        ;; on error the batch is simply discarded (no rollback needed)
+        ;; on error or dry-run the batch is simply discarded (no rollback needed)
         (try (.close batch) (catch Throwable _))))))
