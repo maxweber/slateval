@@ -29,3 +29,5 @@ web/target-cljs
 .rebl
 .shadow-cljs
 .clj-kondo
+2026-*.txt
+expressive-munching-thacker.md
