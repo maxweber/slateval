@@ -52,6 +52,13 @@
        (testing "history exposes retracted datom versions"
          (is (= #{[30] [31] [25]}
                 (d/q '[:find ?a :where [_ :age ?a]] history))))
+       (testing "a 5th pattern element binds the assert/retract flag like Datomic"
+         (is (= #{[30 true] [30 false] [31 true] [25 true]}
+                (d/q '[:find ?a ?added :where [_ :age ?a _ ?added]] history)))
+         (is (= #{[30]}
+                (d/q '[:find ?a :where [_ :age ?a _ false]] history)))
+         (is (= #{[30] [31] [25]}
+                (d/q '[:find ?a :where [_ :age ?a _ true]] history))))
        (testing "history view is read-only"
          (is (thrown-with-msg? Exception #"Cannot transact"
                (d/with history [{:name "Carol"}])))))))
