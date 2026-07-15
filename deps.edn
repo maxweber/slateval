@@ -32,8 +32,6 @@
                  "--enable-native-access=ALL-UNNAMED"]
    :extra-deps
    {io.github.tonsky/duti      {:git/sha "e36d65296a4f9758664309ec35b00887e88c405a"}
-    metosin/jsonista           {:mvn/version "0.3.3"}
-    cheshire/cheshire          {:mvn/version "5.10.0"}
     com.cognitect/transit-clj  {:mvn/version "1.0.324"}}}
 
   :bench
@@ -44,8 +42,7 @@
               "-XX:+DebugNonSafepoints"
               "--enable-native-access=ALL-UNNAMED"]
    :extra-deps
-   {metosin/jsonista {:mvn/version "0.3.3"}
-    io.github.tonsky/duti {:git/sha "e36d65296a4f9758664309ec35b00887e88c405a"}}}
+   {io.github.tonsky/duti {:git/sha "e36d65296a4f9758664309ec35b00887e88c405a"}}}
 
   :datomic
   {:extra-paths ["bench_datomic" "test_datomic"]
