@@ -1,1 +1,0 @@
-{:externs ["slateval/externs.js"]}
