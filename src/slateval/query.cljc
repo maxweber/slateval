@@ -6,7 +6,7 @@
     [clojure.walk :as walk]
     [slateval.built-ins :as built-ins]
     [slateval.db :as db]
-    [me.tonsky.persistent-sorted-set.arrays :as da]
+    [slateval.arrays :as da]
     [slateval.lru :as lru]
     [slateval.impl.entity :as de]
     [slateval.parser :as dp #?@(:cljs [:refer [BindColl BindIgnore BindScalar BindTuple Constant

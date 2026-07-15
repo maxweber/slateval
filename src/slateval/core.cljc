@@ -9,8 +9,7 @@
     [slateval.query :as dq]
     [slateval.impl.entity :as de]
     [slateval.util :as util]
-    [com.yetanalytics.squuid :as squuid]
-    [me.tonsky.persistent-sorted-set :as set])
+    [com.yetanalytics.squuid :as squuid])
   #?(:clj
      (:import
        [slateval.db Datom DB FilteredDB]
@@ -161,12 +160,12 @@
    ```
    
    Options are:
-   
-   :branching-factor <int>, default 512. B-tree max node length
-   :ref-type         :strong | :soft | :weak, default :soft. How will nodes that are already
-                     stored on disk be referenced. Soft or weak means they might be unloaded
-                     from memory under memory pressure and later fetched from storage again.
-   :storage          <IStorage>. Will be used to store this db later with `(d/store db)`"
+
+   :db-file          <string>  Path of this database inside the object store.
+                     Defaults to a fresh temporary path.
+   :object-store-url <string>  URL of the object store backing this database
+                     (e.g. \"file:///\" or an s3:// URL). Defaults to the
+                     local filesystem."
   ([]
    (db/empty-db nil {}))
   ([schema]
@@ -682,5 +681,3 @@
   "Returns time that was used in [[squuid]] call, in milliseconds, rounded to the closest second."
   util/squuid-time-millis)
 
-(defn settings [db]
-  (set/settings (:eavt db)))

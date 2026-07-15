@@ -4,8 +4,7 @@
     [slateval.pull-parser :as dpp]
     [slateval.db :as db #?@(:cljs [:refer [DB]])]
     [slateval.lru :as lru]
-    [slateval.util :as util]
-    [me.tonsky.persistent-sorted-set :as set])
+    [slateval.util :as util])
   #?(:clj
      (:import
        [clojure.lang ISeq]

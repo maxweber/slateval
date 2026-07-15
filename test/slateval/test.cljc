@@ -32,7 +32,6 @@
     slateval.test.query-pull
     slateval.test.query-return-map
     slateval.test.query-rules
-    slateval.test.query-v3
     slateval.test.time-travel
     slateval.test.transact
     slateval.test.tuples

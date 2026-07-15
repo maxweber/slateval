@@ -8,15 +8,13 @@
     #?(:clj [slateval.inline :refer [update]])
     [slateval.lru :as lru]
     [slateval.util :as util]
-    [me.tonsky.persistent-sorted-set :as set]
-    [me.tonsky.persistent-sorted-set.arrays :as arrays]
-    [taoensso.nippy :as nippy]
+    [slateval.arrays :as arrays]
     [com.yetanalytics.squuid :as squuid])
   #?(:clj (:import clojure.lang.IFn$OOL
                     java.util.concurrent.CompletableFuture
                     [io.slatedb.uniffi Db DbBuilder ObjectStore DbIterator KeyValue WriteBatch
                                        KeyRange ScanOptions IterationOrder DurabilityLevel]))
-  #?(:cljs (:require-macros [slateval.db :refer [case-tree combine-cmp defn+ defcomp defrecord-updatable int-compare validate-attr validate-val]]))
+  #?(:cljs (:require-macros [slateval.db :refer [defn+ defrecord-updatable int-compare validate-attr validate-val]]))
   (:refer-clojure :exclude [seqable? #?(:clj update)]))
 
 #?(:clj (set! *warn-on-reflection* true))
@@ -182,17 +180,13 @@
 
 (defprotocol IDatom
   (datom-tx [this])
-  (datom-added [this])
-  (datom-get-idx [this])
-  (datom-set-idx [this value]))
+  (datom-added [this]))
 
-(deftype Datom #?(:clj [e a v tx added ^:unsynchronized-mutable ^int idx ^:unsynchronized-mutable ^int _hash]
-                  :cljs [e a v tx added ^:mutable ^number idx ^:mutable ^number _hash])
+(deftype Datom #?(:clj [e a v tx added ^:unsynchronized-mutable ^int _hash]
+                  :cljs [e a v tx added ^:mutable ^number _hash])
   IDatom
   (datom-tx [d] tx)
   (datom-added [d] added)
-  (datom-get-idx [_] idx)
-  (datom-set-idx [_ value] (set! idx (int value)))
 
   #?@(:cljs
       [IHash
@@ -259,9 +253,9 @@
 #?(:cljs (goog/exportSymbol "slateval.db.Datom" Datom))
 
 (defn ^Datom datom
-  ([e a v] (Datom. e a v tx0 true 0 0))
-  ([e a v tx] (Datom. e a v tx true 0 0))
-  ([e a v tx added] (Datom. e a v tx (boolean added) 0 0)))
+  ([e a v] (Datom. e a v tx0 true 0))
+  ([e a v tx] (Datom. e a v tx true 0))
+  ([e a v tx added] (Datom. e a v tx (boolean added) 0)))
 
 (defn datom? [x] (instance? Datom x))
 
@@ -347,42 +341,6 @@
 ;; datom cmp macros/funcs
 ;;
 
-#?(:clj
-   (defmacro combine-cmp [& comps]
-     (loop [comps (reverse comps)
-            res   (num 0)]
-       (if (not-empty comps)
-         (recur
-           (next comps)
-           `(let [c# ~(first comps)]
-              (if (== 0 c#)
-                ~res
-                c#)))
-         res))))
-
-#?(:clj
-   (defn- -case-tree [queries variants]
-     (if queries
-       (let [v1 (take (/ (count variants) 2) variants)
-             v2 (drop (/ (count variants) 2) variants)]
-         (list 'if (first queries)
-           (-case-tree (next queries) v1)
-           (-case-tree (next queries) v2)))
-       (first variants))))
-
-#?(:clj
-   (defmacro case-tree [qs vs]
-     (-case-tree qs vs)))
-
-(defn cmp
-  #?(:clj
-     {:inline
-      (fn [x y]
-        `(let [x# ~x y# ~y]
-           (if (nil? x#) 0 (if (nil? y#) 0 (long (compare x# y#))))))})
-  ^long [x y]
-  (if (nil? x) 0 (if (nil? y) 0 (long (compare x y)))))
-
 (defn class-identical?
   #?(:clj  {:inline (fn [x y] `(identical? (class ~x) (class ~y)))})
   [x y]
@@ -465,128 +423,6 @@
       (if (not (class-identical? x y))
         (class-compare x y)
         (throw e)))))
-
-(defn value-cmp
-  #?(:clj
-     {:inline
-      (fn [x y]
-        `(let [x# ~x y# ~y]
-           (if (nil? x#) 0 (if (nil? y#) 0 (value-compare x# y#)))))})
-  ^long [x y]
-  (if (nil? x)
-    0
-    (if (nil? y)
-      0
-      (value-compare x y))))
-
-;; Slower cmp-* fns allows for datom fields to be nil.
-;; Such datoms come from slice method where they are used as boundary markers.
-
-#?(:clj
-   (defmacro defcomp [sym [arg1 arg2] & body]
-     (let [a1 (with-meta arg1 {})
-           a2 (with-meta arg2 {})]
-       `(if-cljs
-          (defn ~sym [~arg1 ~arg2]
-            ~@body)
-          (def ~sym
-            (reify
-              java.util.Comparator
-              (compare [_# ~a1 ~a2]
-                (let [~arg1 ~arg1 ~arg2 ~arg2]
-                  ~@body))
-              clojure.lang.IFn
-              (invoke [this# ~a1 ~a2]
-                (.compare this# ~a1 ~a2))
-              IFn$OOL
-              (invokePrim [this# ~a1 ~a2]
-                (.compare this# ~a1 ~a2))))))))
-
-(defcomp cmp-datoms-eavt ^long [^Datom d1, ^Datom d2]
-  (combine-cmp
-    (int-compare (.-e d1) (.-e d2))
-    (cmp (.-a d1) (.-a d2))
-    (value-cmp (.-v d1) (.-v d2))
-    (int-compare (datom-tx d1) (datom-tx d2))))
-
-(defcomp cmp-datoms-aevt ^long [^Datom d1, ^Datom d2]
-  (combine-cmp
-    (cmp (.-a d1) (.-a d2))
-    (int-compare (.-e d1) (.-e d2))
-    (value-cmp (.-v d1) (.-v d2))
-    (int-compare (datom-tx d1) (datom-tx d2))))
-
-(defcomp cmp-datoms-avet ^long [^Datom d1, ^Datom d2]
-  (combine-cmp
-    (cmp (.-a d1) (.-a d2))
-    (value-cmp (.-v d1) (.-v d2))
-    (int-compare (.-e d1) (.-e d2))
-    (int-compare (datom-tx d1) (datom-tx d2))))
-
-;; fast versions without nil checks
-
-(defn- cmp-attr-quick
-  #?(:clj
-     {:inline
-      (fn [a1 a2]
-        `(long (.compareTo ~(with-meta a1 {:tag "Comparable"}) ~a2)))})
-  ^long [a1 a2]
-  ;; either both are keywords or both are strings
-  #?(:cljs
-     (if (keyword? a1)
-       (-compare a1 a2)
-       (garray/defaultCompare a1 a2))
-     :clj
-     (.compareTo ^Comparable a1 a2)))
-
-(defcomp cmp-datoms-eav-quick ^long [^Datom d1, ^Datom d2]
-  (combine-cmp
-    (int-compare (.-e d1) (.-e d2))
-    (cmp-attr-quick (.-a d1) (.-a d2))
-    (value-compare (.-v d1) (.-v d2))))
-
-(defcomp cmp-datoms-eavt-quick ^long [^Datom d1, ^Datom d2]
-  (combine-cmp
-    (int-compare (.-e d1) (.-e d2))
-    (cmp-attr-quick (.-a d1) (.-a d2))
-    (value-compare (.-v d1) (.-v d2))
-    (int-compare (datom-tx d1) (datom-tx d2))))
-
-(defcomp cmp-datoms-aevt-quick ^long [^Datom d1, ^Datom d2]
-  (combine-cmp
-    (cmp-attr-quick (.-a d1) (.-a d2))
-    (int-compare (.-e d1) (.-e d2))
-    (value-compare (.-v d1) (.-v d2))
-    (int-compare (datom-tx d1) (datom-tx d2))))
-
-(defcomp cmp-datoms-avet-quick ^long [^Datom d1, ^Datom d2]
-  (combine-cmp
-    (cmp-attr-quick (.-a d1) (.-a d2))
-    (value-compare (.-v d1) (.-v d2))
-    (int-compare (.-e d1) (.-e d2))
-    (int-compare (datom-tx d1) (datom-tx d2))))
-
-(defn- diff-sorted [a b cmp]
-  (loop [only-a []
-         only-b []
-         both   []
-         a      a
-         b      b]
-    (cond
-      (empty? a) [(not-empty only-a) (not-empty (into only-b b)) (not-empty both)]
-      (empty? b) [(not-empty (into only-a a)) (not-empty only-b) (not-empty both)]
-      :else
-      (let [first-a (first a)
-            first-b (first b)
-            diff (try
-                   (cmp first-a first-b)
-                   (catch #?(:clj ClassCastException :cljs js/Error) _
-                     :incomparable))]
-        (cond
-          (= diff :incomparable) (recur (conj only-a first-a) (conj only-b first-b) both                (next a) (next b))
-          (== diff 0)            (recur only-a                only-b                (conj both first-a) (next a) (next b))
-          (< diff 0)             (recur (conj only-a first-a) only-b                both                (next a) b)
-          (> diff 0)             (recur only-a                (conj only-b first-b) both                a        (next b)))))))
 
 ;; ----------------------------------------------------------------------------
 
@@ -676,15 +512,6 @@
     (update :eavt persistent!)
     (update :aevt persistent!)
     (update :avet persistent!)))
-
-#?(:clj
-   (defn vpred [v]
-     (cond
-       (string? v)  (fn [x] (if (string? x) (.equals ^String v x) false))
-       (int? v)     (fn [x] (if (int? x) (= (long v) (long x)) false))
-       (keyword? v) (fn [x] (.equals ^Object v x))
-       (nil? v)     (fn [x] (nil? x))
-       :else        (fn [x] (= v x)))))
 
 (defn ^com.apple.foundationdb.tuple.Tuple tuple
   "Turns the `components` into a `com.apple.foundationdb.tuple.Tuple`."
@@ -872,14 +699,6 @@
       (throw (ex-info "pack failed"
                       {:tuple tuple}
                       e)))))
-
-(defn case-pick
-  [case datom]
-  (into []
-        (map (fn [component]
-               (get datom
-                    (keyword component))))
-        case))
 
 (declare slice)
 
@@ -1177,9 +996,6 @@
   ISearch
   (-search [db pattern]
     (let [[e a v tx] pattern
-          pred       #?(:clj  (vpred v)
-                        :cljs #(= v %))
-          multival?  (contains? (-attrs-by db :db.cardinality/many) a)
           index (pattern->order db
                                 pattern)
           [begin end] (apply tuple-range
@@ -1310,21 +1126,13 @@
   clojure.data/EqualityPartition
   (equality-partition [x] :slateval/db)
 
+  ;; Implemented only to throw: without this extension `clojure.data/diff`
+  ;; would fall back to its default map implementation and diff the DB
+  ;; record's fields (:conn, :max-tx, ...), silently producing nonsense.
   clojure.data/Diff
   (diff-similar [a b]
-    (diff-sorted (-datoms a
-                          :eavt
-                          nil
-                          nil
-                          nil
-                          nil)
-                 (-datoms b
-                          :eavt
-                          nil
-                          nil
-                          nil
-                          nil)
-                 cmp-datoms-eav-quick)))
+    (throw (UnsupportedOperationException.
+             "clojure.data/diff is not supported on slateval databases, since it would realize both databases entirely in memory"))))
 
 (defn db? [x]
   #?(:clj
