@@ -591,26 +591,6 @@
 
 ;; Datomic compatibility layer
 
-(defn tempid
-  "Allocates and returns a unique temporary id. Returns a random UUID, or :db/current-tx for the tx partition.
-
-   Exists for Datomic API compatibility. Prefer using (gen-id) or UUIDs directly."
-  ([part]
-   (if (= part :db.part/tx)
-     :db/current-tx
-     (gen-id)))
-  ([part x]
-   (if (= part :db.part/tx)
-     :db/current-tx
-     x)))
-
-(defn resolve-tempid
-  "Does a lookup in tempids map, returning the UUID that was assigned to a tempid.
-
-   Exists for Datomic API compatibility. Prefer using map lookup directly if possible."
-  [_db tempids tempid]
-  (get tempids tempid))
-
 (defn ^DB db
   "Returns the underlying immutable database value from a connection.
    
@@ -669,15 +649,4 @@
    (future-call #(transact! conn tx-data tx-meta))))
 
 
-;; squuid
-
-(def ^{:arglists '([] [msec])} squuid
-  "Generates a UUID that grow with time. Such UUIDs will always go to the end  of the index and that will minimize insertions in the middle.
-  
-   Consist of 64 bits of current UNIX timestamp (in seconds) and 64 random bits (2^64 different unique values per second)."
-  util/squuid)
-
-(def ^{:arglists '([uuid])} squuid-time-millis
-  "Returns time that was used in [[squuid]] call, in milliseconds, rounded to the closest second."
-  util/squuid-time-millis)
 

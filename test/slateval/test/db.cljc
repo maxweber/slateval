@@ -26,21 +26,6 @@
     (let [h (hash db)]
       (is (= h @(.-hash db))))))
 
-(defn- now []
-  #?(:clj  (System/currentTimeMillis)
-     :cljs (.getTime (js/Date.))))
-
-(deftest test-uuid
-  (let [now-ms (loop []
-                 (let [ts (now)]
-                   (if (> (mod ts 1000) 900) ;; sleeping over end of a second
-                     (recur)
-                     ts)))
-        now    (int (/ now-ms 1000))]
-    (is (= (* 1000 now) (d/squuid-time-millis (d/squuid))))
-    (is (not= (d/squuid) (d/squuid)))
-    (is (= (subs (str (d/squuid)) 0 8)
-          (subs (str (d/squuid)) 0 8)))))
 
 (deftest test-diff
   ;; clojure.data/diff is deliberately unsupported: slateval databases may
